@@ -292,7 +292,7 @@ function tidyRows(rows, standard = 'esp2013') {
 }
 
 // Load reproduction data from specified file
-async function loadReproductionDataText(filename = "20162019qpr.txt") {
+async function loadReproductionDataText(filename = "QPR-RSMEmin.txt") {
   // Add cache-busting to ensure we get fresh data
   const cacheBuster = `?t=${Date.now()}`;
   const paths = [
@@ -8021,7 +8021,7 @@ function setupControls() {
 function setupModeToggle() {
   // Check URL parameter for mode
   const urlParams = new URLSearchParams(window.location.search);
-  const mode = urlParams.get('mode') || 'advanced';
+  const mode = urlParams.get('mode') || 'basic';
   
   // Apply mode to body
   if (mode === 'basic') {
@@ -8277,9 +8277,9 @@ async function main() {
   
   // Get the selected file from URL parameter or default
   const urlParams = new URLSearchParams(window.location.search);
-  const fileParam = urlParams.get('file') || '20162019qpr.txt';
+  const fileParam = urlParams.get('file') || 'QPR-RSMEmin.txt';
   // Determine which file to load based on parameter
-  let initialFile = '20162019qpr.txt';
+  let initialFile = 'QPR-RSMEmin.txt';
   if (fileParam === 'QPR-RSMEmin.txt') {
     initialFile = 'QPR-RSMEmin.txt';
   } else if (fileParam === '20102019qpr.txt') {
@@ -10887,7 +10887,7 @@ window.addEventListener("DOMContentLoaded", () => {
   
   // Apply mode immediately on page load
   const urlParams = new URLSearchParams(window.location.search);
-  const mode = urlParams.get('mode') || 'advanced';
+  const mode = urlParams.get('mode') || 'basic';
   if (mode === 'basic') {
     document.body.classList.add('basic-mode');
     // Also directly hide advanced-only elements as a fallback
