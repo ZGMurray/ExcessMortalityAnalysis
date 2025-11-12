@@ -2758,17 +2758,17 @@ function renderCountryComparisonTable(trace1, trace2, aggregated1, aggregated2, 
     // Cost per QALY (Population-adjusted cost difference / QALY)
     if (popAdjustedCostDiff !== null && qalyValue !== null && qalyValue !== 0 && isFinite(qalyValue)) {
       const costPerQaly = -popAdjustedCostDiff / qalyValue;
-      const absCostPerQaly = Math.abs(costPerQaly);
-      const costPerQalySign = costPerQaly >= 0 ? '+' : '-';
-      let costPerQalyText;
-      if (absCostPerQaly >= 1e6) {
-        costPerQalyText = `${costPerQalySign}$${(absCostPerQaly / 1e6).toFixed(1)}M`;
-      } else if (absCostPerQaly >= 1e3) {
-        costPerQalyText = `${costPerQalySign}$${(absCostPerQaly / 1e3).toFixed(1)}k`;
-      } else {
-        costPerQalyText = `${costPerQalySign}$${Math.round(absCostPerQaly)}`;
-      }
-      html += `<td style="padding: 8px; text-align: right; border-bottom: 1px solid var(--border);">${costPerQalyText}</td>`;
+        const absCostPerQaly = Math.abs(costPerQaly);
+        const costPerQalySign = costPerQaly >= 0 ? '+' : '-';
+        let costPerQalyText;
+        if (absCostPerQaly >= 1e6) {
+          costPerQalyText = `${costPerQalySign}$${(absCostPerQaly / 1e6).toFixed(1)}M`;
+        } else if (absCostPerQaly >= 1e3) {
+          costPerQalyText = `${costPerQalySign}$${(absCostPerQaly / 1e3).toFixed(1)}k`;
+        } else {
+          costPerQalyText = `${costPerQalySign}$${Math.round(absCostPerQaly)}`;
+        }
+        html += `<td style="padding: 8px; text-align: right; border-bottom: 1px solid var(--border);">${costPerQalyText}</td>`;
     } else {
       html += `<td style="padding: 8px; text-align: right; border-bottom: 1px solid var(--border); color: var(--muted);">—</td>`;
     }
@@ -8278,8 +8278,10 @@ async function main() {
   // Get the selected file from URL parameter or default
   const urlParams = new URLSearchParams(window.location.search);
   const fileParam = urlParams.get('file') || 'QPR-RSMEmin.txt';
+  console.log('File parameter from URL:', fileParam);
   // Determine which file to load based on parameter
   let initialFile = 'QPR-RSMEmin.txt';
+  console.log('Initial file to load:', initialFile);
   if (fileParam === 'QPR-RSMEmin.txt') {
     initialFile = 'QPR-RSMEmin.txt';
   } else if (fileParam === '20102019qpr.txt') {
@@ -9154,7 +9156,7 @@ async function generateBaselineComparison() {
   gridContainer.innerHTML = '';
   
   // Save current state
-  const originalFile = document.getElementById('dataFileSelect')?.value || '20162019qpr.txt';
+  const originalFile = document.getElementById('dataFileSelect')?.value || 'QPR-RSMEmin.txt';
   const originalTraces = [...state.dedicatedPermanentTraces];
   const originalMetadata = [...state.dedicatedPermanentTraceMetadata];
   
