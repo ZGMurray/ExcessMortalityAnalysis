@@ -1,0 +1,208 @@
+PERMANENT CUMULATIVE EXCESS CHART REPRODUCTION DATA
+===================================================
+
+Generated on: 2025-10-29T00:11:35.122Z
+Total traces: 36
+
+TRACE DETAILS:
+--------------------
+
+Trace 1: AUS (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 2: AUT (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 3: BEL (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 4: BGR (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 5: CAN (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 6: CHE (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 7: CHL (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 8: CZE (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 9: DEUTNP (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 10: DNK (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 11: ESP (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 12: EST (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 13: FIN (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 14: FRATNP (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 15: GBRTENW (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 16: GBR_NIR (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 17: GBR_SCO (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 18: GRC (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 19: HRV (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 20: HUN (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 21: ISL (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 22: ISR (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 23: ITA (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 24: LTU (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 25: LUX (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 26: LVA (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 27: NLD (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 28: NOR (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 29: NZL_NP (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 30: POL (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 31: PRT (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 32: SVK (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 33: SVN (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 34: SWE (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 35: TWN (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+Trace 36: USA (b)
+  Baseline Type: quasi_poisson
+  Baseline Range: 2010-W01 to 2019-W52
+  Start Date: 2020-01-01
+
+REPRODUCTION INSTRUCTIONS:
+------------------------------
+
+N/A
+
+BASELINE METHODS USED:
+-------------------------
+
+- Quasi Poisson + Seasonal Adjustments
+
+NOTES:
+----------
+
+- All baselines are seasonal-adjusted (trend + seasonal deviations)
+- RMSE 2025 is calculated using 2025 data validation
+- Baseline statistics are computed from the baseline window only
+- Cumulative excess starts from the specified start date
+- Data is filtered to 2020 and beyond for cumulative calculations
+
