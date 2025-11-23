@@ -761,11 +761,11 @@ function updateSummaryTable(filteredTraces) {
   let html = '<table class="summary-table"><thead><tr>';
   html += '<th>#</th>';
   html += '<th>Country</th>';
-  html += '<th class="sortable" data-year="0">2021 <span class="sort-indicator"></span></th>';
-  html += '<th class="sortable" data-year="1">2022 <span class="sort-indicator"></span></th>';
-  html += '<th class="sortable" data-year="2">2023 <span class="sort-indicator"></span></th>';
-  html += '<th class="sortable" data-year="3">2024 <span class="sort-indicator"></span></th>';
-  html += '<th class="sortable" data-year="4">2025 <span class="sort-indicator"></span></th>';
+  html += '<th class="sortable" data-year="0">2020 <span class="sort-indicator"></span></th>';
+  html += '<th class="sortable" data-year="1">2021 <span class="sort-indicator"></span></th>';
+  html += '<th class="sortable" data-year="2">2022 <span class="sort-indicator"></span></th>';
+  html += '<th class="sortable" data-year="3">2023 <span class="sort-indicator"></span></th>';
+  html += '<th class="sortable" data-year="4">2024 <span class="sort-indicator"></span></th>';
   html += '</tr></thead><tbody>';
   
   sortedData.forEach((row, index) => {
@@ -971,12 +971,16 @@ function fitPolynomialTrend(xData, yData, degree = 2, allowNegative = false) {
   
   if (df2 > 0 && ssTot > 0) {
     const ssReg = ssTot - ssRes; // Sum of squares for regression
-    const msReg = ssReg / df1; // Mean square for regression
+    // Ensure ssReg is non-negative (can be negative due to numerical errors)
+    const ssRegSafe = Math.max(0, ssReg);
+    const msReg = ssRegSafe / df1; // Mean square for regression
     const msRes = ssRes / df2; // Mean square for residuals
     
-    if (msRes > 0) {
+    if (msRes > 0 && isFinite(msReg) && isFinite(msRes)) {
       const fStat = msReg / msRes;
+      if (isFinite(fStat) && fStat > 0) {
       pValue = calculatePValueFromF(fStat, df1, df2);
+      }
     }
   }
   
@@ -1013,7 +1017,31 @@ function calculatePValueFromF(fStat, df1, df2) {
   // The p-value is 1 - CDF(F)
   
   // Convert F to beta distribution parameter
+  // x = df2 / (df2 + df1 * fStat)
+  // When F is very large, x approaches 0
+  // When F is very small, x approaches 1
   const x = df2 / (df2 + df1 * fStat);
+  
+  // Handle edge cases where x is very close to 0 or 1
+  if (x <= 0 || !isFinite(x)) {
+    // If x is 0 or negative, F is very large, p-value should be very small
+    // But we should still calculate it properly rather than returning 0
+    // Use a very small x value instead
+    const xSafe = Math.max(1e-20, x);
+    const a = df1 / 2;
+    const b = df2 / 2;
+    const betaCDF = incompleteBetaFunction(xSafe, a, b);
+    if (betaCDF === null || !isFinite(betaCDF)) {
+      // For extremely large F, return a small but non-zero p-value
+      return Math.max(1e-10, 1 / (1 + fStat));
+    }
+    return Math.max(0, 1 - betaCDF);
+  }
+  
+  if (x >= 1 || !isFinite(x)) {
+    // If x is 1 or greater, F is very small, p-value should be close to 1
+    return 1;
+  }
   
   // Calculate incomplete beta function I_x(a, b) using continued fraction approximation
   // This gives us the CDF of the beta distribution
@@ -1022,11 +1050,25 @@ function calculatePValueFromF(fStat, df1, df2) {
   
   const betaCDF = incompleteBetaFunction(x, a, b);
   
-  // p-value = 1 - CDF (for F-test we test if the regression is significant)
-  const pValue = 1 - betaCDF;
+  // Check if betaCDF is valid
+  if (betaCDF === null || !isFinite(betaCDF)) {
+    // Fallback: if F is very large, p-value should be very small
+    // Use a rough approximation for very large F
+    if (fStat > 100) return 0.0001;
+    return null;
+  }
   
-  // Clamp to valid range
-  return Math.max(0, Math.min(1, pValue));
+  // p-value = 1 - CDF (for F-test we test if the regression is significant)
+  let pValue = 1 - betaCDF;
+  
+  // Ensure p-value is in valid range and handle numerical precision issues
+  if (pValue < 0) pValue = 0;
+  if (pValue > 1) pValue = 1;
+  
+  // Return the calculated p-value
+  // Note: If the p-value is extremely small (< 1e-10), it might be due to numerical precision
+  // but we'll return it as-is since very small p-values are valid for highly significant results
+  return pValue;
 }
 
 // Calculate incomplete beta function I_x(a, b) using continued fraction
@@ -1040,14 +1082,41 @@ function incompleteBetaFunction(x, a, b) {
     return 1 - incompleteBetaFunction(1 - x, b, a);
   }
   
+  // For very small x, use series expansion to avoid numerical issues
+  // I_x(a, b) ≈ (x^a / (a * B(a, b))) * [1 + a*(1-x)/(a+1) + ...]
+  if (x < 1e-10) {
+    const beta = betaFunction(a, b);
+    if (beta <= 0) return null;
+    // Use first term of series: I_x(a, b) ≈ (x^a) / (a * B(a, b))
+    const firstTerm = Math.pow(x, a) / (a * beta);
+    // This is a very rough approximation, but for very small x it should be close
+    return Math.min(1, firstTerm);
+  }
+  
   // Use continued fraction representation
   // I_x(a, b) = (x^a * (1-x)^b) / (a * B(a, b)) * [1 + sum of continued fraction terms]
   
   const beta = betaFunction(a, b);
-  if (beta <= 0) return null;
+  if (beta <= 0 || !isFinite(beta)) return null;
   
   // Compute using continued fraction (Lentz's method)
-  const factor = Math.pow(x, a) * Math.pow(1 - x, b) / (a * beta);
+  const xPowA = Math.pow(x, a);
+  const oneMinusXPowB = Math.pow(1 - x, b);
+  
+  // Check for numerical issues
+  if (!isFinite(xPowA) || !isFinite(oneMinusXPowB) || xPowA === 0) {
+    // If x^a is too small, return a small value
+    if (xPowA === 0 || !isFinite(xPowA)) {
+      return 0;
+    }
+    return null;
+  }
+  
+  const factor = xPowA * oneMinusXPowB / (a * beta);
+  
+  if (!isFinite(factor) || factor === 0) {
+    return 0;
+  }
   
   // Continued fraction approximation
   let result = 1;
@@ -1084,6 +1153,862 @@ function incompleteBetaFunction(x, a, b) {
 // Calculate Beta function B(a, b) = Gamma(a) * Gamma(b) / Gamma(a + b)
 function betaFunction(a, b) {
   return gammaFunction(a) * gammaFunction(b) / gammaFunction(a + b);
+}
+
+// Calculate incomplete gamma function P(a, x) = gamma(a, x) / Gamma(a)
+// Using series expansion for small x and continued fraction for large x
+function incompleteGammaFunction(a, x) {
+  if (x < 0 || a <= 0) return null;
+  if (x === 0) return 0;
+  
+  // For small x, use series expansion
+  if (x < a + 1) {
+    let sum = 1;
+    let term = 1;
+    for (let n = 1; n < 100; n++) {
+      term *= x / (a + n - 1);
+      sum += term;
+      if (term < 1e-15) break;
+    }
+    return Math.pow(x, a) * Math.exp(-x) * sum / gammaFunction(a);
+  } else {
+    // For large x, use continued fraction
+    // P(a, x) = 1 - (x^a * exp(-x) / Gamma(a)) * continued fraction
+    let b = x + 1 - a;
+    let c = 1 / 1e-30;
+    let d = 1 / b;
+    let h = d;
+    for (let i = 1; i < 100; i++) {
+      const an = -i * (i - a);
+      b += 2;
+      d = an * d + b;
+      if (Math.abs(d) < 1e-30) d = 1e-30;
+      c = b + an / c;
+      if (Math.abs(c) < 1e-30) c = 1e-30;
+      d = 1 / d;
+      const del = d * c;
+      h *= del;
+      if (Math.abs(del - 1) < 1e-10) break;
+    }
+    return 1 - Math.pow(x, a) * Math.exp(-x) * h / gammaFunction(a);
+  }
+}
+
+// Calculate chi-square CDF: P(chi-square(k) <= x)
+function chiSquareCDF(x, k) {
+  if (x < 0 || k <= 0) return 0;
+  
+  // For chi-square(1), use the relationship: chi-square(1) = (standard normal)^2
+  // P(chi-square(1) <= x) = 2 * Φ(√x) - 1, where Φ is the standard normal CDF
+  if (k === 1) {
+    if (x === 0) return 0;
+    const sqrtX = Math.sqrt(x);
+    // Standard normal CDF approximation
+    function normalCDF(z) {
+      const a1 =  0.254829592;
+      const a2 = -0.284496736;
+      const a3 =  1.421413741;
+      const a4 = -1.453152027;
+      const a5 =  1.061405429;
+      const p  =  0.3275911;
+      
+      const sign = z < 0 ? -1 : 1;
+      z = Math.abs(z) / Math.sqrt(2.0);
+      
+      const t = 1.0 / (1.0 + p * z);
+      const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-z * z);
+      
+      return 0.5 * (1.0 + sign * y);
+    }
+    return 2 * normalCDF(sqrtX) - 1;
+  }
+  
+  // For other degrees of freedom, use incomplete gamma function
+  // chi-square(k) = Gamma(k/2, x/2) / Gamma(k/2)
+  return incompleteGammaFunction(k / 2, x / 2);
+}
+
+// Calculate Breusch-Pagan test for heteroscedasticity
+// Tests if residuals have constant variance (homoscedasticity)
+// Returns { statistic, pValue }
+function breuschPaganTest(xValues, yValues) {
+  const n = xValues.length;
+  if (n < 3) return { statistic: null, pValue: null };
+  
+  // Step 1: Fit regression y = a + b*x
+  const xMean = xValues.reduce((sum, x) => sum + x, 0) / n;
+  const yMean = yValues.reduce((sum, y) => sum + y, 0) / n;
+  
+  let numerator = 0;
+  let xSumSq = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const xDiff = xValues[i] - xMean;
+    const yDiff = yValues[i] - yMean;
+    numerator += xDiff * yDiff;
+    xSumSq += xDiff * xDiff;
+  }
+  
+  if (xSumSq === 0) return { statistic: null, pValue: null };
+  
+  const b = numerator / xSumSq;
+  const a = yMean - b * xMean;
+  
+  // Step 2: Calculate residuals
+  const residuals = [];
+  for (let i = 0; i < n; i++) {
+    const predicted = a + b * xValues[i];
+    residuals.push(yValues[i] - predicted);
+  }
+  
+  // Step 3: Calculate mean of squared residuals
+  const meanSquaredResidual = residuals.reduce((sum, e) => sum + e * e, 0) / n;
+  
+  if (meanSquaredResidual === 0) return { statistic: null, pValue: null };
+  
+  // Step 4: Square the residuals and normalize
+  const squaredResiduals = residuals.map(e => e * e / meanSquaredResidual);
+  
+  // Step 5: Regress squared residuals on x
+  const squaredMean = squaredResiduals.reduce((sum, r) => sum + r, 0) / n;
+  
+  let num = 0;
+  let den = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const xDiff = xValues[i] - xMean;
+    const rDiff = squaredResiduals[i] - squaredMean;
+    num += xDiff * rDiff;
+    den += xDiff * xDiff;
+  }
+  
+  if (den === 0) return { statistic: null, pValue: null };
+  
+  const slope = num / den;
+  const intercept = squaredMean - slope * xMean;
+  
+  // Step 6: Calculate R² of auxiliary regression
+  let ssRes = 0;
+  let ssTot = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const predicted = intercept + slope * xValues[i];
+    const residual = squaredResiduals[i] - predicted;
+    ssRes += residual * residual;
+    const totDiff = squaredResiduals[i] - squaredMean;
+    ssTot += totDiff * totDiff;
+  }
+  
+  const r2 = ssTot > 0 ? 1 - (ssRes / ssTot) : 0;
+  
+  // Step 7: Test statistic is n * R², follows chi-square(1) under H0
+  const statistic = n * r2;
+  
+  // Step 8: Calculate p-value from chi-square(1) distribution
+  const pValue = 1 - chiSquareCDF(statistic, 1);
+  
+  return {
+    statistic: statistic,
+    pValue: pValue
+  };
+}
+
+// Calculate White's test for heteroscedasticity
+// Tests if residuals have constant variance (homoscedasticity)
+// More general than Breusch-Pagan - includes squared terms
+// Returns { statistic, pValue }
+function whiteTest(xValues, yValues) {
+  const n = xValues.length;
+  if (n < 4) return { statistic: null, pValue: null }; // Need at least 4 points for White's test
+  
+  // Step 1: Fit regression y = a + b*x
+  const xMean = xValues.reduce((sum, x) => sum + x, 0) / n;
+  const yMean = yValues.reduce((sum, y) => sum + y, 0) / n;
+  
+  let numerator = 0;
+  let xSumSq = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const xDiff = xValues[i] - xMean;
+    const yDiff = yValues[i] - yMean;
+    numerator += xDiff * yDiff;
+    xSumSq += xDiff * xDiff;
+  }
+  
+  if (xSumSq === 0) return { statistic: null, pValue: null };
+  
+  const b = numerator / xSumSq;
+  const a = yMean - b * xMean;
+  
+  // Step 2: Calculate residuals
+  const residuals = [];
+  for (let i = 0; i < n; i++) {
+    const predicted = a + b * xValues[i];
+    residuals.push(yValues[i] - predicted);
+  }
+  
+  // Step 3: Square the residuals
+  const squaredResiduals = residuals.map(e => e * e);
+  
+  // Step 4: Regress squared residuals on x and x²
+  // For White's test, we regress e² on [1, x, x²]
+  // This is a multiple regression with 3 parameters (intercept, x, x²)
+  
+  // Create design matrix: [1, x, x²]
+  const X = [];
+  for (let i = 0; i < n; i++) {
+    X.push([1, xValues[i], xValues[i] * xValues[i]]);
+  }
+  
+  // Fit multiple regression: squaredResiduals = c0 + c1*x + c2*x²
+  // Using normal equations: (X'X)β = X'y
+  // Build X'X matrix (3x3)
+  let XTX = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  let XTy = [0, 0, 0];
+  
+  for (let i = 0; i < n; i++) {
+    const xi = X[i];
+    const yi = squaredResiduals[i];
+    
+    // X'X
+    for (let j = 0; j < 3; j++) {
+      for (let k = 0; k < 3; k++) {
+        XTX[j][k] += xi[j] * xi[k];
+      }
+    }
+    
+    // X'y
+    for (let j = 0; j < 3; j++) {
+      XTy[j] += xi[j] * yi;
+    }
+  }
+  
+  // Solve (X'X)β = X'y using Gaussian elimination
+  // Simple 3x3 matrix inversion
+  const det = XTX[0][0] * (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) -
+              XTX[0][1] * (XTX[1][0] * XTX[2][2] - XTX[1][2] * XTX[2][0]) +
+              XTX[0][2] * (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]);
+  
+  if (Math.abs(det) < 1e-10) return { statistic: null, pValue: null };
+  
+  // Calculate inverse of XTX
+  const invXTX = [
+    [
+      (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) / det,
+      (XTX[0][2] * XTX[2][1] - XTX[0][1] * XTX[2][2]) / det,
+      (XTX[0][1] * XTX[1][2] - XTX[0][2] * XTX[1][1]) / det
+    ],
+    [
+      (XTX[1][2] * XTX[2][0] - XTX[1][0] * XTX[2][2]) / det,
+      (XTX[0][0] * XTX[2][2] - XTX[0][2] * XTX[2][0]) / det,
+      (XTX[0][2] * XTX[1][0] - XTX[0][0] * XTX[1][2]) / det
+    ],
+    [
+      (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]) / det,
+      (XTX[0][1] * XTX[2][0] - XTX[0][0] * XTX[2][1]) / det,
+      (XTX[0][0] * XTX[1][1] - XTX[0][1] * XTX[1][0]) / det
+    ]
+  ];
+  
+  // Calculate coefficients: β = (X'X)^(-1) X'y
+  const coeffs = [0, 0, 0];
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 3; j++) {
+      coeffs[i] += invXTX[i][j] * XTy[j];
+    }
+  }
+  
+  // Step 5: Calculate R² of auxiliary regression
+  const yMeanSq = squaredResiduals.reduce((sum, y) => sum + y, 0) / n;
+  
+  let ssRes = 0;
+  let ssTot = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const predicted = coeffs[0] + coeffs[1] * xValues[i] + coeffs[2] * xValues[i] * xValues[i];
+    const residual = squaredResiduals[i] - predicted;
+    ssRes += residual * residual;
+    const totDiff = squaredResiduals[i] - yMeanSq;
+    ssTot += totDiff * totDiff;
+  }
+  
+  const r2 = ssTot > 0 ? 1 - (ssRes / ssTot) : 0;
+  
+  // Step 6: Test statistic is n * R², follows chi-square(2) under H0
+  // (2 degrees of freedom because we have x and x² as regressors, excluding intercept)
+  const statistic = n * r2;
+  
+  // Step 7: Calculate p-value from chi-square(2) distribution
+  const pValue = 1 - chiSquareCDF(statistic, 2);
+  
+  return {
+    statistic: statistic,
+    pValue: pValue
+  };
+}
+
+// Calculate Cook's distance for each point and count outliers
+// Returns the number of points with Cook's distance > 4/n
+// Cook's distance measures the influence of each data point on the regression
+function countCookDistanceOutliers(xValues, yValues) {
+  const n = xValues.length;
+  if (n < 3) return 0;
+  
+  // Fit regression y = a + b*x
+  const xMean = xValues.reduce((sum, x) => sum + x, 0) / n;
+  const yMean = yValues.reduce((sum, y) => sum + y, 0) / n;
+  
+  let numerator = 0;
+  let xSumSq = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const xDiff = xValues[i] - xMean;
+    const yDiff = yValues[i] - yMean;
+    numerator += xDiff * yDiff;
+    xSumSq += xDiff * xDiff;
+  }
+  
+  if (xSumSq === 0) return 0;
+  
+  const b = numerator / xSumSq;
+  const a = yMean - b * xMean;
+  
+  // Calculate residuals and MSE
+  const residuals = [];
+  let sumSquaredResiduals = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const predicted = a + b * xValues[i];
+    const residual = yValues[i] - predicted;
+    residuals.push(residual);
+    sumSquaredResiduals += residual * residual;
+  }
+  
+  // MSE = sum of squared residuals / (n - k) where k = 2 (intercept and slope)
+  const mse = sumSquaredResiduals / (n - 2);
+  if (mse === 0) return 0;
+  
+  // Calculate Cook's distance for each point
+  // D_i = (r_i^2 / (k * MSE)) * (h_i / (1 - h_i)^2)
+  // where h_i is the leverage: h_i = 1/n + (x_i - x_mean)^2 / sum((x_j - x_mean)^2)
+  const k = 2; // number of parameters (intercept and slope)
+  // Use 1 as threshold (common for small samples; 4/n can be too strict)
+  const threshold = 1.0;
+  let outlierCount = 0;
+  
+  for (let i = 0; i < n; i++) {
+    // Calculate leverage
+    const xDiff = xValues[i] - xMean;
+    const leverage = (1 / n) + (xDiff * xDiff) / xSumSq;
+    
+    // Calculate Cook's distance
+    const residualSq = residuals[i] * residuals[i];
+    const cooksDistance = (residualSq / (k * mse)) * (leverage / ((1 - leverage) * (1 - leverage)));
+    
+    // Count if exceeds threshold
+    if (cooksDistance > threshold) {
+      outlierCount++;
+    }
+  }
+  
+  return outlierCount;
+}
+
+// Calculate p-value using robust standard errors (White's heteroscedasticity-consistent estimator)
+// For polynomial regression, tests overall significance using Wald test
+function calculateRobustPValue(xValues, yValues, coefficients, residuals) {
+  const n = xValues.length;
+  const k = coefficients.length; // number of parameters (intercept + polynomial terms)
+  
+  if (n < k + 1 || residuals.length !== n) return null;
+  
+  // Build design matrix X: [1, x, x², ...]
+  const X = [];
+  for (let i = 0; i < n; i++) {
+    const row = [];
+    for (let j = 0; j < k; j++) {
+      row.push(Math.pow(xValues[i], j));
+    }
+    X.push(row);
+  }
+  
+  // Calculate X'X
+  const XTX = [];
+  for (let i = 0; i < k; i++) {
+    XTX[i] = [];
+    for (let j = 0; j < k; j++) {
+      let sum = 0;
+      for (let m = 0; m < n; m++) {
+        sum += X[m][i] * X[m][j];
+      }
+      XTX[i][j] = sum;
+    }
+  }
+  
+  // Calculate (X'X)^(-1)
+  let invXTX = null;
+  if (k === 3) {
+    // 3x3 matrix inversion for degree 2 polynomial
+    const det = XTX[0][0] * (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) -
+                XTX[0][1] * (XTX[1][0] * XTX[2][2] - XTX[1][2] * XTX[2][0]) +
+                XTX[0][2] * (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]);
+    
+    // Use a more lenient threshold for near-singular matrices
+    if (!isFinite(det) || Math.abs(det) < 1e-12) return null;
+    
+    invXTX = [
+      [
+        (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) / det,
+        (XTX[0][2] * XTX[2][1] - XTX[0][1] * XTX[2][2]) / det,
+        (XTX[0][1] * XTX[1][2] - XTX[0][2] * XTX[1][1]) / det
+      ],
+      [
+        (XTX[1][2] * XTX[2][0] - XTX[1][0] * XTX[2][2]) / det,
+        (XTX[0][0] * XTX[2][2] - XTX[0][2] * XTX[2][0]) / det,
+        (XTX[0][2] * XTX[1][0] - XTX[0][0] * XTX[1][2]) / det
+      ],
+      [
+        (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]) / det,
+        (XTX[0][1] * XTX[2][0] - XTX[0][0] * XTX[2][1]) / det,
+        (XTX[0][0] * XTX[1][1] - XTX[0][1] * XTX[1][0]) / det
+      ]
+    ];
+  } else {
+    // For other sizes, use solveLinearSystem (if available) or return null
+    return null;
+  }
+  
+  if (!invXTX) return null;
+  
+  // Calculate X'ΩX where Ω is diagonal matrix of squared residuals
+  // Ω[i][i] = residuals[i]^2
+  const XTOmegaX = [];
+  for (let i = 0; i < k; i++) {
+    XTOmegaX[i] = [];
+    for (let j = 0; j < k; j++) {
+      let sum = 0;
+      for (let m = 0; m < n; m++) {
+        sum += X[m][i] * X[m][j] * residuals[m] * residuals[m];
+      }
+      XTOmegaX[i][j] = sum;
+    }
+  }
+  
+  // Calculate robust variance-covariance matrix: (X'X)^(-1) X'ΩX (X'X)^(-1)
+  // First: temp = X'ΩX * (X'X)^(-1)
+  const temp = [];
+  for (let i = 0; i < k; i++) {
+    temp[i] = [];
+    for (let j = 0; j < k; j++) {
+      let sum = 0;
+      for (let m = 0; m < k; m++) {
+        sum += XTOmegaX[i][m] * invXTX[m][j];
+      }
+      temp[i][j] = sum;
+    }
+  }
+  
+  // Then: V_robust = (X'X)^(-1) * temp
+  const Vrobust = [];
+  for (let i = 0; i < k; i++) {
+    Vrobust[i] = [];
+    for (let j = 0; j < k; j++) {
+      let sum = 0;
+      for (let m = 0; m < k; m++) {
+        sum += invXTX[i][m] * temp[m][j];
+      }
+      Vrobust[i][j] = sum;
+      // Check for invalid values
+      if (!isFinite(Vrobust[i][j])) {
+        return null;
+      }
+    }
+  }
+  
+  // For overall significance, test non-intercept coefficients using Wald test
+  // Extract non-intercept coefficients and their variance-covariance submatrix
+  const betaNonIntercept = coefficients.slice(1); // Exclude intercept
+  const VNonIntercept = [];
+  for (let i = 1; i < k; i++) {
+    VNonIntercept[i - 1] = [];
+    for (let j = 1; j < k; j++) {
+      VNonIntercept[i - 1][j - 1] = Vrobust[i][j];
+    }
+  }
+  
+  // Calculate Wald statistic: W = β' V^(-1) β
+  // First, invert VNonIntercept (for k-1 = 2, it's a 2x2 matrix)
+  const dfNonIntercept = k - 1;
+  if (dfNonIntercept === 2) {
+    const detV = VNonIntercept[0][0] * VNonIntercept[1][1] - VNonIntercept[0][1] * VNonIntercept[1][0];
+    
+    // Use a more lenient threshold and check for finite values
+    if (!isFinite(detV) || Math.abs(detV) < 1e-12) {
+      // Try alternative: use diagonal elements only (simplified robust SE)
+      // This is a fallback when the full variance-covariance matrix is singular
+      let waldStat = 0;
+      for (let i = 0; i < dfNonIntercept; i++) {
+        if (VNonIntercept[i][i] > 1e-12 && isFinite(VNonIntercept[i][i])) {
+          waldStat += (betaNonIntercept[i] * betaNonIntercept[i]) / VNonIntercept[i][i];
+        }
+      }
+      if (!isFinite(waldStat) || waldStat < 0) return null;
+      const pValue = 1 - chiSquareCDF(waldStat, dfNonIntercept);
+      return Math.max(0, Math.min(1, pValue));
+    }
+    
+    const invV = [
+      [VNonIntercept[1][1] / detV, -VNonIntercept[0][1] / detV],
+      [-VNonIntercept[1][0] / detV, VNonIntercept[0][0] / detV]
+    ];
+    
+    // Check if inverse matrix has finite values
+    if (!invV.every(row => row.every(val => isFinite(val)))) return null;
+    
+    // Calculate Wald statistic: β' V^(-1) β
+    let waldStat = 0;
+    for (let i = 0; i < dfNonIntercept; i++) {
+      for (let j = 0; j < dfNonIntercept; j++) {
+        waldStat += betaNonIntercept[i] * invV[i][j] * betaNonIntercept[j];
+      }
+    }
+    
+    if (!isFinite(waldStat) || waldStat < 0) return null;
+    
+    // Wald statistic follows chi-square(dfNonIntercept) under H0
+    const pValue = 1 - chiSquareCDF(waldStat, dfNonIntercept);
+    return Math.max(0, Math.min(1, pValue));
+  }
+  
+  return null;
+}
+
+// Breusch-Pagan test for polynomial regression
+// Takes xValues and residuals from polynomial regression
+function breuschPaganTestPolynomial(xValues, residuals) {
+  const n = xValues.length;
+  if (n < 3) return { statistic: null, pValue: null };
+  
+  // Step 1: Calculate mean of squared residuals
+  const meanSquaredResidual = residuals.reduce((sum, e) => sum + e * e, 0) / n;
+  if (meanSquaredResidual === 0) return { statistic: null, pValue: null };
+  
+  // Step 2: Square the residuals and normalize
+  const squaredResiduals = residuals.map(e => e * e / meanSquaredResidual);
+  
+  // Step 3: Regress squared residuals on x
+  const xMean = xValues.reduce((sum, x) => sum + x, 0) / n;
+  const squaredMean = squaredResiduals.reduce((sum, r) => sum + r, 0) / n;
+  
+  let num = 0;
+  let den = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const xDiff = xValues[i] - xMean;
+    const rDiff = squaredResiduals[i] - squaredMean;
+    num += xDiff * rDiff;
+    den += xDiff * xDiff;
+  }
+  
+  if (den === 0) return { statistic: null, pValue: null };
+  
+  const slope = num / den;
+  const intercept = squaredMean - slope * xMean;
+  
+  // Step 4: Calculate R² of auxiliary regression
+  let ssRes = 0;
+  let ssTot = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const predicted = intercept + slope * xValues[i];
+    const residual = squaredResiduals[i] - predicted;
+    ssRes += residual * residual;
+    const totDiff = squaredResiduals[i] - squaredMean;
+    ssTot += totDiff * totDiff;
+  }
+  
+  const r2 = ssTot > 0 ? 1 - (ssRes / ssTot) : 0;
+  
+  // Step 5: Test statistic is n * R², follows chi-square(1) under H0
+  const statistic = n * r2;
+  
+  // Step 6: Calculate p-value from chi-square(1) distribution
+  const pValue = 1 - chiSquareCDF(statistic, 1);
+  
+  return {
+    statistic: statistic,
+    pValue: pValue
+  };
+}
+
+// White's test for polynomial regression
+// Takes xValues and residuals from polynomial regression
+function whiteTestPolynomial(xValues, residuals) {
+  const n = xValues.length;
+  if (n < 4) return { statistic: null, pValue: null };
+  
+  // Step 1: Square the residuals
+  const squaredResiduals = residuals.map(e => e * e);
+  
+  // Step 2: Regress squared residuals on x and x²
+  // Create design matrix: [1, x, x²]
+  const X = [];
+  for (let i = 0; i < n; i++) {
+    X.push([1, xValues[i], xValues[i] * xValues[i]]);
+  }
+  
+  // Fit multiple regression: squaredResiduals = c0 + c1*x + c2*x²
+  // Using normal equations: (X'X)β = X'y
+  // Build X'X matrix (3x3)
+  let XTX = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  let XTy = [0, 0, 0];
+  
+  for (let i = 0; i < n; i++) {
+    const xi = X[i];
+    const yi = squaredResiduals[i];
+    
+    // X'X
+    for (let j = 0; j < 3; j++) {
+      for (let k = 0; k < 3; k++) {
+        XTX[j][k] += xi[j] * xi[k];
+      }
+    }
+    
+    // X'y
+    for (let j = 0; j < 3; j++) {
+      XTy[j] += xi[j] * yi;
+    }
+  }
+  
+  // Solve (X'X)β = X'y using Gaussian elimination
+  // Simple 3x3 matrix inversion
+  const det = XTX[0][0] * (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) -
+              XTX[0][1] * (XTX[1][0] * XTX[2][2] - XTX[1][2] * XTX[2][0]) +
+              XTX[0][2] * (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]);
+  
+  // Use a more lenient threshold and check for finite values
+  if (!isFinite(det) || Math.abs(det) < 1e-12) return { statistic: null, pValue: null };
+  
+  // Calculate inverse of XTX
+  const invXTX = [
+    [
+      (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) / det,
+      (XTX[0][2] * XTX[2][1] - XTX[0][1] * XTX[2][2]) / det,
+      (XTX[0][1] * XTX[1][2] - XTX[0][2] * XTX[1][1]) / det
+    ],
+    [
+      (XTX[1][2] * XTX[2][0] - XTX[1][0] * XTX[2][2]) / det,
+      (XTX[0][0] * XTX[2][2] - XTX[0][2] * XTX[2][0]) / det,
+      (XTX[0][2] * XTX[1][0] - XTX[0][0] * XTX[1][2]) / det
+    ],
+    [
+      (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]) / det,
+      (XTX[0][1] * XTX[2][0] - XTX[0][0] * XTX[2][1]) / det,
+      (XTX[0][0] * XTX[1][1] - XTX[0][1] * XTX[1][0]) / det
+    ]
+  ];
+  
+  // Check if inverse matrix has finite values
+  if (!invXTX.every(row => row.every(val => isFinite(val)))) {
+    return { statistic: null, pValue: null };
+  }
+  
+  // Calculate coefficients: β = (X'X)^(-1) X'y
+  const coeffs = [0, 0, 0];
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 3; j++) {
+      coeffs[i] += invXTX[i][j] * XTy[j];
+    }
+  }
+  
+  // Check if coefficients are finite
+  if (!coeffs.every(c => isFinite(c))) {
+    return { statistic: null, pValue: null };
+  }
+  
+  // Step 3: Calculate R² of auxiliary regression
+  const yMeanSq = squaredResiduals.reduce((sum, y) => sum + y, 0) / n;
+  
+  let ssRes = 0;
+  let ssTot = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const predicted = coeffs[0] + coeffs[1] * xValues[i] + coeffs[2] * xValues[i] * xValues[i];
+    const residual = squaredResiduals[i] - predicted;
+    ssRes += residual * residual;
+    const totDiff = squaredResiduals[i] - yMeanSq;
+    ssTot += totDiff * totDiff;
+  }
+  
+  const r2 = ssTot > 0 ? 1 - (ssRes / ssTot) : 0;
+  
+  // Step 4: Test statistic is n * R², follows chi-square(2) under H0
+  const statistic = n * r2;
+  
+  // Step 5: Calculate p-value from chi-square(2) distribution
+  // Check if statistic is valid
+  if (!isFinite(statistic) || statistic < 0) {
+    return { statistic: null, pValue: null };
+  }
+  
+  const pValue = 1 - chiSquareCDF(statistic, 2);
+  
+  // Ensure p-value is valid
+  if (!isFinite(pValue)) {
+    return { statistic: statistic, pValue: null };
+  }
+  
+  return {
+    statistic: statistic,
+    pValue: Math.max(0, Math.min(1, pValue))
+  };
+}
+
+// Calculate Cook's distance for polynomial regression
+// Takes xValues, yValues, and polynomial coefficients
+function countCookDistanceOutliersPolynomial(xValues, yValues, coefficients) {
+  const n = xValues.length;
+  if (n < 3 || !coefficients || coefficients.length < 2) return 0;
+  
+  const k = coefficients.length; // number of parameters (intercept, x, x², ...)
+  
+  // Calculate residuals and MSE
+  const residuals = [];
+  let sumSquaredResiduals = 0;
+  
+  for (let i = 0; i < n; i++) {
+    let predicted = 0;
+    for (let j = 0; j < coefficients.length; j++) {
+      predicted += coefficients[j] * Math.pow(xValues[i], j);
+    }
+    const residual = yValues[i] - predicted;
+    residuals.push(residual);
+    sumSquaredResiduals += residual * residual;
+  }
+  
+  // MSE = sum of squared residuals / (n - k)
+  const mse = sumSquaredResiduals / (n - k);
+  if (mse === 0) return 0;
+  
+  // Build design matrix X for leverage calculation
+  const X = [];
+  for (let i = 0; i < n; i++) {
+    const row = [];
+    for (let j = 0; j < k; j++) {
+      row.push(Math.pow(xValues[i], j));
+    }
+    X.push(row);
+  }
+  
+  // Calculate X'X
+  const XTX = [];
+  for (let i = 0; i < k; i++) {
+    XTX[i] = [];
+    for (let j = 0; j < k; j++) {
+      let sum = 0;
+      for (let m = 0; m < n; m++) {
+        sum += X[m][i] * X[m][j];
+      }
+      XTX[i][j] = sum;
+    }
+  }
+  
+  // For Cook's distance, we need the leverage h_i = X_i (X'X)^(-1) X_i'
+  // Calculate using the diagonal of the hat matrix H = X(X'X)^(-1)X'
+  
+  // First, calculate (X'X)^(-1) using Gaussian elimination for kxk matrix
+  // Simple matrix inversion for small k (k=3 for degree 2 polynomial)
+  let invXTX;
+  if (k === 3) {
+    // 3x3 matrix inversion
+    const det = XTX[0][0] * (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) -
+                XTX[0][1] * (XTX[1][0] * XTX[2][2] - XTX[1][2] * XTX[2][0]) +
+                XTX[0][2] * (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]);
+    
+    if (Math.abs(det) < 1e-10) {
+      // Singular matrix, use simplified approach
+      const threshold = 4 / n;
+      let outlierCount = 0;
+      for (let i = 0; i < n; i++) {
+        const residualSq = residuals[i] * residuals[i];
+        const cooksDistance = residualSq / (k * mse);
+        if (cooksDistance > threshold) {
+          outlierCount++;
+        }
+      }
+      return outlierCount;
+    }
+    
+    invXTX = [
+      [
+        (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) / det,
+        (XTX[0][2] * XTX[2][1] - XTX[0][1] * XTX[2][2]) / det,
+        (XTX[0][1] * XTX[1][2] - XTX[0][2] * XTX[1][1]) / det
+      ],
+      [
+        (XTX[1][2] * XTX[2][0] - XTX[1][0] * XTX[2][2]) / det,
+        (XTX[0][0] * XTX[2][2] - XTX[0][2] * XTX[2][0]) / det,
+        (XTX[0][2] * XTX[1][0] - XTX[0][0] * XTX[1][2]) / det
+      ],
+      [
+        (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]) / det,
+        (XTX[0][1] * XTX[2][0] - XTX[0][0] * XTX[2][1]) / det,
+        (XTX[0][0] * XTX[1][1] - XTX[0][1] * XTX[1][0]) / det
+      ]
+    ];
+  } else {
+    // For other k values, use simplified approach
+    const threshold = 4 / n;
+    let outlierCount = 0;
+    for (let i = 0; i < n; i++) {
+      const residualSq = residuals[i] * residuals[i];
+      const cooksDistance = residualSq / (k * mse);
+      if (cooksDistance > threshold) {
+        outlierCount++;
+      }
+    }
+    return outlierCount;
+  }
+  
+  // Calculate leverage h_i = X_i (X'X)^(-1) X_i' for each point
+  const threshold = 4 / n; // Standard threshold: 4/n
+  let outlierCount = 0;
+  
+  for (let i = 0; i < n; i++) {
+    // Calculate leverage: h_i = X_i (X'X)^(-1) X_i'
+    // X_i is the i-th row of X
+    const Xi = X[i];
+    
+    // Calculate (X'X)^(-1) * X_i'
+    const invXTX_Xi = [];
+    for (let j = 0; j < k; j++) {
+      let sum = 0;
+      for (let m = 0; m < k; m++) {
+        sum += invXTX[j][m] * Xi[m];
+      }
+      invXTX_Xi[j] = sum;
+    }
+    
+    // Calculate h_i = X_i * invXTX_Xi
+    let leverage = 0;
+    for (let j = 0; j < k; j++) {
+      leverage += Xi[j] * invXTX_Xi[j];
+    }
+    
+    // Ensure leverage is in valid range [0, 1]
+    leverage = Math.max(0, Math.min(1, leverage));
+    
+    // Calculate Cook's distance
+    const residualSq = residuals[i] * residuals[i];
+    const cooksDistance = (residualSq / (k * mse)) * (leverage / ((1 - leverage) * (1 - leverage) + 1e-10));
+    
+    // Count if exceeds threshold
+    if (cooksDistance > threshold) {
+      outlierCount++;
+    }
+  }
+  
+  return outlierCount;
 }
 
 // Calculate Gamma function using Stirling's approximation with Lanczos correction
@@ -1175,9 +2100,13 @@ function getExcessValue(yearValue, trace) {
   if (!trace || !trace.x || !trace.y) return null;
   
   // Parse year and determine if isolated
+  // Note: The year label represents the data year, but we need to look up data
+  // at (year + 1)-01-01 to get cumulative data up to that point
+  // e.g., "2020" label means data from 01.2020-12.2020, which is at 2021-01-01
   const isIsolated = yearValue.includes('-isolated');
   const year = parseInt(yearValue.replace('-isolated', ''));
-  const yearStart = new Date(`${year}-01-01T00:00:00Z`);
+  const lookupYear = year + 1; // Add 1 to look up the correct data point
+  const yearStart = new Date(`${lookupYear}-01-01T00:00:00Z`);
   
   // Get cumulative excess for the selected year
   let cumulativeExcess = null;
@@ -1212,8 +2141,8 @@ function getExcessValue(yearValue, trace) {
   
   // If isolated, subtract the previous year's cumulative excess
   if (isIsolated) {
-    // For 2021, isolated is the same as cumulative (no previous year)
-    if (year === 2021) {
+    // For 2020, isolated is the same as cumulative (no previous year)
+    if (year === 2020) {
       return {
         excess: cumulativeExcess,
         year: year,
@@ -1221,9 +2150,10 @@ function getExcessValue(yearValue, trace) {
       };
     }
     
-    // For years after 2021, subtract previous year's cumulative
+    // For years after 2020, subtract previous year's cumulative
     const prevYear = year - 1;
-    const prevYearStart = new Date(`${prevYear}-01-01T00:00:00Z`);
+    const prevLookupYear = prevYear + 1;
+    const prevYearStart = new Date(`${prevLookupYear}-01-01T00:00:00Z`);
     let prevCumulativeExcess = null;
     let prevMinDiff = Infinity;
     
@@ -1550,8 +2480,9 @@ function renderRegressionSummaryTable(filteredTraces) {
   const baselineDisplayName = getBaselineDisplayName(currentBaselineFile);
   
   // Determine which year column to use (based on table sorting)
+  // Note: selectedYearIndex maps to labels 2020-2024, but data lookup uses 2021-2025
   const selectedYearIndex = currentSortColumn !== null ? currentSortColumn : 4;
-  const selectedYear = 2021 + selectedYearIndex;
+  const selectedYear = 2020 + selectedYearIndex; // Label year (2020-2024)
   
   const yearStarts = [
     new Date('2021-01-01T00:00:00Z'),
@@ -2138,9 +3069,9 @@ function calculateQuartiles(validityType) {
   const countryValues = new Map();
   
   // First, collect all country values
-  if (validityType === '2025-svi') {
-    // Calculate 2025 SVI for all countries
-    const regression = calculateFixedRegression(2025);
+  if (validityType === '2024-svi') {
+    // Calculate 2024 SVI for all countries
+    const regression = calculateFixedRegression(2024);
     if (!regression || !regression.predict) return null;
     
     state.dedicatedPermanentTraces.forEach((trace, traceIndex) => {
@@ -2355,12 +3286,12 @@ function updateCounterfactualValidity(metadata1, metadata2, country1Name, countr
   
   let value1, value2, diff, sign, displayText, tooltipText, quartile1, quartile2;
   
-  if (validityType === '2025-svi') {
-    // Calculate 2025 Structural Vulnerability Index for both countries
-    const regression = calculateFixedRegression(2025);
+  if (validityType === '2024-svi') {
+    // Calculate 2024 Structural Vulnerability Index for both countries
+    const regression = calculateFixedRegression(2024);
     
     if (!regression || !regression.predict) {
-      console.warn("Failed to get 2025 regression for SVI calculation");
+      console.warn("Failed to get 2024 regression for SVI calculation");
       container.textContent = '—';
       container.title = '';
       container.style.color = '';
@@ -2406,7 +3337,7 @@ function updateCounterfactualValidity(metadata1, metadata2, country1Name, countr
     diff = value1 - value2;
     sign = diff > 0 ? '+' : '';
     displayText = `${sign}${diff.toFixed(1)} SVI`;
-    tooltipText = `${country1Name} 2025 SVI: ${value1.toFixed(1)} | ${country2Name} 2025 SVI: ${value2.toFixed(1)}`;
+    tooltipText = `${country1Name} 2024 SVI: ${value1.toFixed(1)} | ${country2Name} 2024 SVI: ${value2.toFixed(1)}`;
   } else {
     // Calculate 2019 ASMR for both countries
     value1 = calculateAverageASMR(metadata1.originalRows, '2019');
@@ -3405,7 +4336,8 @@ function populateResidualExplanatoryPowerVariableSelect(policyVariables) {
 }
 
 // Render scatterplot showing explanatory power of selected policy variable
-function renderPolicyExplanatoryPowerChart(filteredTraces) {
+// excludeInfluentialPoints: if true, exclude influential points from regression calculation
+function renderPolicyExplanatoryPowerChart(filteredTraces, excludeInfluentialPoints = false) {
   const container = document.getElementById('policyExplanatoryPowerChart');
   if (!container) return;
   
@@ -3542,91 +4474,225 @@ function renderPolicyExplanatoryPowerChart(filteredTraces) {
     return;
   }
   
-  // Calculate R² and regression line
-  const xValues = dataPoints.map(d => d.x);
-  const yValues = dataPoints.map(d => d.y);
+  // First, identify influential points using all data
+  const allXValues = dataPoints.map(d => d.x);
+  const allYValues = dataPoints.map(d => d.y);
   
-  // Calculate means
-  const xMean = xValues.reduce((sum, x) => sum + x, 0) / xValues.length;
-  const yMean = yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
+  const initialTrendLine = fitPolynomialTrend(allXValues, allYValues, 2, true);
+  if (!initialTrendLine || !isFinite(initialTrendLine.rSquared)) {
+    Plotly.purge(container);
+    Plotly.react(container, [], {
+      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+      xaxis: { title: `${selectedPolicyYear === '2020-2021' ? 'Average' : selectedPolicyYear} ${selectedPolicy}` }, 
+      yaxis: { title: `${selectedType === 'isolated' ? 'Isolated' : 'Cumulative'} Excess Mortality (${selectedYear})` },
+      margin: { t: 20, r: 10, b: 40, l: 50 },
+    }, { responsive: true, displayModeBar: false });
+    // Hide button if no valid regression
+    const hideBtn = document.getElementById('hideInfluentialPointsBtn');
+    if (hideBtn) hideBtn.style.display = 'none';
+    return;
+  }
   
-  // Calculate correlation and R²
-  let numerator = 0;
+  // Calculate influential points using all data
+  const initialCoefficients = initialTrendLine.coefficients;
+  const initialResiduals = [];
+  for (let i = 0; i < allXValues.length; i++) {
+    let predicted = 0;
+    for (let j = 0; j < initialCoefficients.length; j++) {
+      predicted += initialCoefficients[j] * Math.pow(allXValues[i], j);
+    }
+    initialResiduals.push(allYValues[i] - predicted);
+  }
+  
+  const outlierIndices = [];
+  const cookOutliers = countCookDistanceOutliersPolynomial(allXValues, allYValues, initialCoefficients);
+  
+  // Calculate outlier indices
+  const n = allXValues.length;
+  const xMean = allXValues.reduce((sum, x) => sum + x, 0) / n;
   let xSumSq = 0;
-  let ySumSq = 0;
-  
-  for (let i = 0; i < xValues.length; i++) {
-    const xDiff = xValues[i] - xMean;
-    const yDiff = yValues[i] - yMean;
-    numerator += xDiff * yDiff;
+  for (let i = 0; i < n; i++) {
+    const xDiff = allXValues[i] - xMean;
     xSumSq += xDiff * xDiff;
-    ySumSq += yDiff * yDiff;
   }
   
-  const correlation = (xSumSq > 0 && ySumSq > 0) ? numerator / Math.sqrt(xSumSq * ySumSq) : 0;
-  const r2 = correlation * correlation;
-  
-  // Calculate p-value for correlation
-  // Using t-test: t = r * sqrt((n-2) / (1-r²))
-  let pValue = null;
-  const n = dataPoints.length;
-  if (n > 2 && Math.abs(correlation) < 1) {
-    const tStat = correlation * Math.sqrt((n - 2) / (1 - r2));
-    const df = n - 2; // degrees of freedom
-    
-    // Calculate p-value using t-distribution approximation
-    // For two-tailed test: p = 2 * (1 - tCDF(|t|, df))
-    // Using approximation: p ≈ 2 * (1 - normalCDF(|t|)) for large df
-    // For smaller df, we can use a simple approximation
-    const absT = Math.abs(tStat);
-    
-    // Simple approximation using normal distribution (works well for df > 30)
-    // For smaller df, this is still a reasonable approximation
-    // More accurate would require a full t-distribution implementation
-    const z = absT;
-    // Standard normal CDF approximation
-    const p = 1 - (0.5 * (1 + erf(z / Math.sqrt(2))));
-    pValue = 2 * p; // two-tailed test
+  // Build design matrix X for leverage calculation
+  const X = [];
+  for (let i = 0; i < n; i++) {
+    const row = [];
+    for (let j = 0; j < initialCoefficients.length; j++) {
+      row.push(Math.pow(allXValues[i], j));
+    }
+    X.push(row);
   }
   
-  // Helper function for error function approximation
-  function erf(x) {
-    // Approximation of error function
-    const a1 =  0.254829592;
-    const a2 = -0.284496736;
-    const a3 =  1.421413741;
-    const a4 = -1.453152027;
-    const a5 =  1.061405429;
-    const p  =  0.3275911;
-    
-    const sign = x < 0 ? -1 : 1;
-    x = Math.abs(x);
-    
-    const t = 1.0 / (1.0 + p * x);
-    const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-    
-    return sign * y;
+  // Calculate X'X
+  const XTX = [];
+  for (let i = 0; i < initialCoefficients.length; i++) {
+    XTX[i] = [];
+    for (let j = 0; j < initialCoefficients.length; j++) {
+      let sum = 0;
+      for (let m = 0; m < n; m++) {
+        sum += X[m][i] * X[m][j];
+      }
+      XTX[i][j] = sum;
+    }
   }
   
-  // Calculate regression line (y = a + b*x)
-  const b = xSumSq > 0 ? numerator / xSumSq : 0;
-  const a = yMean - b * xMean;
+  // Calculate (X'X)^(-1) for k=3 (degree 2 polynomial)
+  const k = initialCoefficients.length;
+  if (k === 3) {
+    const det = XTX[0][0] * (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) -
+                XTX[0][1] * (XTX[1][0] * XTX[2][2] - XTX[1][2] * XTX[2][0]) +
+                XTX[0][2] * (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]);
+    
+    if (Math.abs(det) >= 1e-10) {
+      const invXTX = [
+        [
+          (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) / det,
+          (XTX[0][2] * XTX[2][1] - XTX[0][1] * XTX[2][2]) / det,
+          (XTX[0][1] * XTX[1][2] - XTX[0][2] * XTX[1][1]) / det
+        ],
+        [
+          (XTX[1][2] * XTX[2][0] - XTX[1][0] * XTX[2][2]) / det,
+          (XTX[0][0] * XTX[2][2] - XTX[0][2] * XTX[2][0]) / det,
+          (XTX[0][2] * XTX[1][0] - XTX[0][0] * XTX[1][2]) / det
+        ],
+        [
+          (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]) / det,
+          (XTX[0][1] * XTX[2][0] - XTX[0][0] * XTX[2][1]) / det,
+          (XTX[0][0] * XTX[1][1] - XTX[0][1] * XTX[1][0]) / det
+        ]
+      ];
+      
+      let sumSquaredResiduals = 0;
+      for (let i = 0; i < n; i++) {
+        sumSquaredResiduals += initialResiduals[i] * initialResiduals[i];
+      }
+      const mse = sumSquaredResiduals / (n - k);
+      const threshold = 4 / n;
+      
+      if (mse > 0) {
+        for (let i = 0; i < dataPoints.length; i++) {
+          const Xi = X[i];
+          
+          // Calculate (X'X)^(-1) * X_i'
+          const invXTX_Xi = [];
+          for (let j = 0; j < k; j++) {
+            let sum = 0;
+            for (let m = 0; m < k; m++) {
+              sum += invXTX[j][m] * Xi[m];
+            }
+            invXTX_Xi[j] = sum;
+          }
+          
+          // Calculate h_i = X_i * invXTX_Xi
+          let leverage = 0;
+          for (let j = 0; j < k; j++) {
+            leverage += Xi[j] * invXTX_Xi[j];
+          }
+          leverage = Math.max(0, Math.min(1, leverage));
+          
+          const residualSq = initialResiduals[i] * initialResiduals[i];
+          const cooksDistance = (residualSq / (k * mse)) * (leverage / ((1 - leverage) * (1 - leverage) + 1e-10));
+          
+          if (cooksDistance > threshold) {
+            outlierIndices.push(i);
+          }
+        }
+      }
+    }
+  }
   
-  // Create regression line points
-  const xMin = Math.min(...xValues);
-  const xMax = Math.max(...xValues);
-  const xRange = xMax - xMin;
-  const regressionX = [xMin - xRange * 0.1, xMax + xRange * 0.1];
-  const regressionY = regressionX.map(x => a + b * x);
+  // Show/hide button based on whether there are influential points
+  const hideBtn = document.getElementById('hideInfluentialPointsBtn');
+  if (hideBtn) {
+    if (outlierIndices.length > 0) {
+      hideBtn.style.display = 'inline-block';
+      hideBtn.textContent = excludeInfluentialPoints ? 'Show Influential Points' : 'Hide Influential Points';
+    } else {
+      hideBtn.style.display = 'none';
+    }
+  }
   
-  // Create scatterplot trace
+  // Filter data points if excluding influential points
+  let filteredDataPoints = dataPoints;
+  if (excludeInfluentialPoints && outlierIndices.length > 0) {
+    filteredDataPoints = dataPoints.filter((point, index) => !outlierIndices.includes(index));
+  }
+  
+  // Recalculate regression with filtered data
+  const xValues = filteredDataPoints.map(d => d.x);
+  const yValues = filteredDataPoints.map(d => d.y);
+  
+  const trendLine = fitPolynomialTrend(xValues, yValues, 2, true);
+  if (!trendLine || !isFinite(trendLine.rSquared)) {
+    Plotly.purge(container);
+    Plotly.react(container, [], {
+      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+      xaxis: { title: `${selectedPolicyYear === '2020-2021' ? 'Average' : selectedPolicyYear} ${selectedPolicy}` }, 
+      yaxis: { title: `${selectedType === 'isolated' ? 'Isolated' : 'Cumulative'} Excess Mortality (${selectedYear})` },
+      margin: { t: 20, r: 10, b: 40, l: 50 },
+    }, { responsive: true, displayModeBar: false });
+    return;
+  }
+  
+  const r2 = trendLine.rSquared;
+  const pValue = trendLine.pValue;
+  const coefficients = trendLine.coefficients;
+  
+  // Calculate residuals from polynomial regression (using filtered data)
+  const residuals = [];
+  for (let i = 0; i < xValues.length; i++) {
+    let predicted = 0;
+    for (let j = 0; j < coefficients.length; j++) {
+      predicted += coefficients[j] * Math.pow(xValues[i], j);
+    }
+    residuals.push(yValues[i] - predicted);
+  }
+  
+  // Calculate White's test for heteroscedasticity (using polynomial residuals from filtered data)
+  let whiteTestResult = { pValue: null };
+  try {
+    whiteTestResult = whiteTestPolynomial(xValues, residuals);
+  } catch (e) {
+    console.warn('White test failed:', e);
+  }
+  
+  // Calculate robust p-value (using filtered data)
+  let robustPValue = null;
+  try {
+    robustPValue = calculateRobustPValue(xValues, yValues, coefficients, residuals);
+  } catch (e) {
+    console.warn('Robust SE calculation failed:', e);
+  }
+  
+  // Split ALL data points into outliers and non-outliers (for display)
+  // But use filtered data for regression
+  const outlierPoints = [];
+  const normalPoints = [];
+  
+  dataPoints.forEach((point, index) => {
+    if (outlierIndices.includes(index)) {
+      outlierPoints.push(point);
+    } else {
+      normalPoints.push(point);
+    }
+  });
+  
+  // Use polynomial trend line points from fitPolynomialTrend
+  const regressionX = trendLine.x;
+  const regressionY = trendLine.y;
+  
+  // Create scatterplot trace for normal points
   const scatterTrace = {
-    x: dataPoints.map(d => d.x),
-    y: dataPoints.map(d => d.y),
+    x: normalPoints.map(d => d.x),
+    y: normalPoints.map(d => d.y),
     mode: 'markers+text',
     type: 'scatter',
     name: 'Countries',
-    text: dataPoints.map(d => d.countryName),
+    showlegend: false,
+    text: normalPoints.map(d => d.countryName),
     textposition: 'top center',
     textfont: { size: 10 },
     marker: {
@@ -3635,16 +4701,38 @@ function renderPolicyExplanatoryPowerChart(filteredTraces) {
       opacity: 0.7
     },
     hovertemplate: '<b>%{text}</b><br>Policy Value: %{x:.2f}<br>Excess Mortality: %{y:.2f}<extra></extra>',
-    customdata: dataPoints.map(d => d.countryName)
+    customdata: normalPoints.map(d => d.countryName)
   };
   
-  // Create regression line trace
+  // Create scatterplot trace for outliers (always show them, but maybe with different opacity if excluded)
+  const outlierTrace = outlierPoints.length > 0 ? {
+    x: outlierPoints.map(d => d.x),
+    y: outlierPoints.map(d => d.y),
+    mode: 'markers+text',
+    type: 'scatter',
+    name: `Influential Points (Cook's D > 4/n)`,
+    text: outlierPoints.map(d => d.countryName),
+    textposition: 'top center',
+    textfont: { size: 10, color: '#d62728' },
+    marker: {
+      size: 12,
+      color: '#d62728',
+      opacity: excludeInfluentialPoints ? 0.3 : 0.9,
+      symbol: 'diamond',
+      line: { width: 2, color: '#ffffff' }
+    },
+    hovertemplate: '<b>%{text}</b> (Influential Point)<br>Policy Value: %{x:.2f}<br>Excess Mortality: %{y:.2f}<extra></extra>',
+    customdata: outlierPoints.map(d => d.countryName)
+  } : null;
+  
+  // Create regression line trace (simplified name for plot)
   const regressionTrace = {
     x: regressionX,
     y: regressionY,
     mode: 'lines',
     type: 'scatter',
-    name: `R² = ${r2.toFixed(3)}${pValue !== null ? `, p = ${pValue < 0.001 ? '<0.001' : pValue.toFixed(3)}` : ''}`,
+    name: 'Regression',
+    showlegend: false,
     line: {
       color: '#ff7f0e',
       width: 2,
@@ -3654,7 +4742,53 @@ function renderPolicyExplanatoryPowerChart(filteredTraces) {
     customdata: [[r2, pValue !== null ? (pValue < 0.001 ? '<0.001' : pValue.toFixed(3)) : 'N/A']]
   };
   
-  const traces = [scatterTrace, regressionTrace];
+  // Update outlier trace to not show in legend
+  if (outlierTrace) {
+    outlierTrace.showlegend = false;
+  }
+  scatterTrace.showlegend = false;
+  
+  const traces = [scatterTrace];
+  if (outlierTrace) {
+    traces.push(outlierTrace);
+  }
+  traces.push(regressionTrace);
+  
+  // Populate separate legend element above the plot
+  const legendContainer = document.getElementById('policyExplanatoryPowerLegend');
+  if (legendContainer) {
+    let legendHTML = '<div style="display: flex; flex-wrap: wrap; gap: 15px; align-items: center;">';
+    
+    // Countries
+    legendHTML += '<span><span style="display: inline-block; width: 12px; height: 12px; background-color: #1f77b4; border-radius: 50%; margin-right: 5px;"></span>Countries</span>';
+    
+    // Influential Points
+    if (outlierPoints.length > 0) {
+      legendHTML += `<span><span style="display: inline-block; width: 12px; height: 12px; background-color: #d62728; border: 2px solid #ffffff; transform: rotate(45deg); margin-right: 5px;"></span>Influential Points (Cook's D > ${(4/allXValues.length).toFixed(3)})</span>`;
+    }
+    
+    // Statistics
+    legendHTML += `<span><strong>R² = ${r2.toFixed(3)}</strong></span>`;
+    if (pValue !== null) {
+      legendHTML += `<span>p = ${pValue < 0.001 ? '<0.001' : pValue.toFixed(3)}</span>`;
+    }
+    if (robustPValue !== null && isFinite(robustPValue)) {
+      legendHTML += `<span>p (Robust SE) = ${robustPValue < 0.001 ? '<0.001' : robustPValue.toFixed(3)}</span>`;
+    }
+    if (whiteTestResult.pValue !== null && isFinite(whiteTestResult.pValue)) {
+      legendHTML += `<span>White p = ${whiteTestResult.pValue < 0.001 ? '<0.001' : whiteTestResult.pValue.toFixed(3)}</span>`;
+    }
+    legendHTML += `<span>n = ${xValues.length}`;
+    if (excludeInfluentialPoints && outlierIndices.length > 0) {
+      legendHTML += ` (${outlierIndices.length} influential points excluded)`;
+    } else if (!excludeInfluentialPoints && outlierIndices.length > 0) {
+      legendHTML += `, Influential Points: ${outlierIndices.length}`;
+    }
+    legendHTML += '</span>';
+    
+    legendHTML += '</div>';
+    legendContainer.innerHTML = legendHTML;
+  }
   
   const layout = {
     paper_bgcolor: "rgba(0,0,0,0)",
@@ -3666,23 +4800,8 @@ function renderPolicyExplanatoryPowerChart(filteredTraces) {
       title: `${selectedType === 'isolated' ? 'Isolated' : 'Cumulative'} Excess Mortality (${selectedYear})`
     },
     margin: { t: 20, r: 10, b: 40, l: 60 },
-    legend: { x: 0.02, y: 0.98, bgcolor: 'rgba(255, 255, 255, 0.8)' },
-    hovermode: 'closest',
-    annotations: [{
-      x: xMax,
-      y: yMean,
-      text: `R² = ${r2.toFixed(3)}${pValue !== null ? `<br>p = ${pValue < 0.001 ? '<0.001' : pValue.toFixed(3)}` : ''}<br>n = ${dataPoints.length}`,
-      showarrow: false,
-      xref: 'x',
-      yref: 'y',
-      xanchor: 'right',
-      yanchor: 'middle',
-      bgcolor: 'rgba(255, 255, 255, 0.8)',
-      bordercolor: 'rgba(0, 0, 0, 0.5)',
-      borderwidth: 1,
-      borderpad: 4,
-      font: { size: 12 }
-    }]
+    showlegend: false,
+    hovermode: 'closest'
   };
   
   Plotly.react(container, traces, layout, { responsive: true, displayModeBar: false });
@@ -3775,62 +4894,62 @@ function calculatePolicyVariableStats(policyVar, policyYear, excessYear, excessT
     return null;
   }
   
-  // Calculate correlation and R²
+  // Use polynomial regression (degree 2) like structural factors
   const xValues = dataPoints.map(d => d.x);
   const yValues = dataPoints.map(d => d.y);
   
-  const xMean = xValues.reduce((sum, x) => sum + x, 0) / xValues.length;
-  const yMean = yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
-  
-  let numerator = 0;
-  let xSumSq = 0;
-  let ySumSq = 0;
-  
-  for (let i = 0; i < xValues.length; i++) {
-    const xDiff = xValues[i] - xMean;
-    const yDiff = yValues[i] - yMean;
-    numerator += xDiff * yDiff;
-    xSumSq += xDiff * xDiff;
-    ySumSq += yDiff * yDiff;
+  const trendLine = fitPolynomialTrend(xValues, yValues, 2, true); // degree 2, allowNegative = true
+  if (!trendLine || !isFinite(trendLine.rSquared)) {
+    return null;
   }
   
-  const correlation = (xSumSq > 0 && ySumSq > 0) ? numerator / Math.sqrt(xSumSq * ySumSq) : 0;
-  const r2 = correlation * correlation;
-  
-  // Calculate p-value
-  let pValue = null;
+  const r2 = trendLine.rSquared;
+  const pValue = trendLine.pValue;
   const n = dataPoints.length;
-  if (n > 2 && Math.abs(correlation) < 1) {
-    const tStat = correlation * Math.sqrt((n - 2) / (1 - r2));
-    const absT = Math.abs(tStat);
-    
-    function erf(x) {
-      const a1 =  0.254829592;
-      const a2 = -0.284496736;
-      const a3 =  1.421413741;
-      const a4 = -1.453152027;
-      const a5 =  1.061405429;
-      const p  =  0.3275911;
-      
-      const sign = x < 0 ? -1 : 1;
-      x = Math.abs(x);
-      
-      const t = 1.0 / (1.0 + p * x);
-      const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-      
-      return sign * y;
+  const coefficients = trendLine.coefficients;
+  
+  // Calculate residuals from polynomial regression for tests
+  const residuals = [];
+  for (let i = 0; i < n; i++) {
+    let predicted = 0;
+    for (let j = 0; j < coefficients.length; j++) {
+      predicted += coefficients[j] * Math.pow(xValues[i], j);
     }
-    
-    const z = absT;
-    const p = 1 - (0.5 * (1 + erf(z / Math.sqrt(2))));
-    pValue = 2 * p;
+    residuals.push(yValues[i] - predicted);
+  }
+  
+  // Calculate Breusch-Pagan test for heteroscedasticity (using polynomial residuals)
+  const bpTest = breuschPaganTestPolynomial(xValues, residuals);
+  
+  // Calculate White's test for heteroscedasticity (using polynomial residuals)
+  let whiteTestResult = { pValue: null };
+  try {
+    whiteTestResult = whiteTestPolynomial(xValues, residuals);
+  } catch (e) {
+    console.warn('White test failed:', e);
+  }
+  
+  // Calculate number of Cook's distance outliers (using polynomial regression)
+  const cookOutliers = countCookDistanceOutliersPolynomial(xValues, yValues, coefficients);
+  
+  // Calculate p-value using robust standard errors
+  let robustPValue = null;
+  try {
+    robustPValue = calculateRobustPValue(xValues, yValues, coefficients, residuals);
+  } catch (e) {
+    console.warn('Robust SE calculation failed:', e);
   }
   
   return {
     variable: policyVar,
     r2: r2,
     pValue: pValue,
-    n: n
+    robustPValue: robustPValue,
+    bpPValue: bpTest.pValue,
+    whitePValue: whiteTestResult.pValue,
+    cookOutliers: cookOutliers,
+    n: n,
+    coefficients: coefficients // Store for chart rendering
   };
 }
 
@@ -3860,20 +4979,24 @@ function renderPolicyExplanatoryPowerTable(filteredTraces, selectedYear, selecte
   // Build subtitle
   const policyYearLabel = selectedPolicyYear === '2020-2021' ? '2020-2021 Average' : selectedPolicyYear;
   const typeLabel = selectedType === 'isolated' ? 'Isolated' : 'Cumulative';
-  const subtitle = `(${policyYearLabel} Policy vs ${selectedYear} Excess Mortality (${typeLabel}))`;
+  const subtitle = `${policyYearLabel} Policy vs ${selectedYear} Excess Mortality (${typeLabel})`;
   
   // Build table HTML
-  let html = `<div style="margin-top: 10px; margin-bottom: 8px; color: var(--text); opacity: 0.8; font-size: 0.9em;">${subtitle}</div>`;
-  html += '<table style="width: 100%; border-collapse: collapse; margin-top: 10px;">';
-  html += '<thead><tr style="border-bottom: 2px solid var(--text);">';
+  let html = '<table style="width: 100%; border-collapse: collapse; margin-top: 10px;">';
+  html += '<thead>';
+  html += `<tr style="border-bottom: 1px solid var(--text);"><th colspan="7" style="text-align: left; padding: 8px;">${subtitle}</th></tr>`;
+  html += '<tr style="border-bottom: 2px solid var(--text);">';
   html += '<th style="text-align: left; padding: 8px;">Policy Variable</th>';
   html += '<th style="text-align: right; padding: 8px;">R²</th>';
   html += '<th style="text-align: right; padding: 8px;">p-value</th>';
+  html += '<th style="text-align: right; padding: 8px; white-space: nowrap;">p-value<br>(Robust SE)</th>';
+  html += '<th style="text-align: right; padding: 8px; white-space: nowrap;">White<br>p-value</th>';
+  html += '<th style="text-align: right; padding: 8px; white-space: nowrap;">Influential<br>Points</th>';
   html += '<th style="text-align: right; padding: 8px;">n</th>';
   html += '</tr></thead><tbody>';
   
   if (stats.length === 0) {
-    html += '<tr><td colspan="4" style="text-align: center; padding: 8px; color: var(--text); opacity: 0.7;">No statistically significant variables (p < 0.05)</td></tr>';
+    html += '<tr><td colspan="7" style="text-align: center; padding: 8px; color: var(--text); opacity: 0.7;">No statistically significant variables (p < 0.05)</td></tr>';
   } else {
     stats.forEach(item => {
       html += '<tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1);">';
@@ -3884,6 +5007,21 @@ function renderPolicyExplanatoryPowerTable(filteredTraces, selectedYear, selecte
       } else {
         html += `<td style="text-align: right; padding: 8px;">${item.pValue.toFixed(4)}</td>`;
       }
+      if (item.robustPValue === null || !isFinite(item.robustPValue)) {
+        html += '<td style="text-align: right; padding: 8px;">—</td>';
+      } else if (item.robustPValue < 0.001) {
+        html += '<td style="text-align: right; padding: 8px;">&lt;0.001</td>';
+      } else {
+        html += `<td style="text-align: right; padding: 8px;">${item.robustPValue.toFixed(4)}</td>`;
+      }
+      if (item.whitePValue === null || !isFinite(item.whitePValue)) {
+        html += '<td style="text-align: right; padding: 8px;">—</td>';
+      } else if (item.whitePValue < 0.001) {
+        html += '<td style="text-align: right; padding: 8px;">&lt;0.001</td>';
+      } else {
+        html += `<td style="text-align: right; padding: 8px;">${item.whitePValue.toFixed(4)}</td>`;
+      }
+      html += `<td style="text-align: right; padding: 8px;">${item.cookOutliers !== undefined ? item.cookOutliers : 0}</td>`;
       html += `<td style="text-align: right; padding: 8px;">${item.n}</td>`;
       html += '</tr>';
     });
@@ -3995,62 +5133,62 @@ function calculateResidualPolicyVariableStats(policyVar, policyYear, excessYear,
     return null;
   }
   
-  // Calculate correlation and R²
+  // Use polynomial regression (degree 2) like structural factors
   const xValues = dataPoints.map(d => d.x);
   const yValues = dataPoints.map(d => d.y);
   
-  const xMean = xValues.reduce((sum, x) => sum + x, 0) / xValues.length;
-  const yMean = yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
-  
-  let numerator = 0;
-  let xSumSq = 0;
-  let ySumSq = 0;
-  
-  for (let i = 0; i < xValues.length; i++) {
-    const xDiff = xValues[i] - xMean;
-    const yDiff = yValues[i] - yMean;
-    numerator += xDiff * yDiff;
-    xSumSq += xDiff * xDiff;
-    ySumSq += yDiff * yDiff;
+  const trendLine = fitPolynomialTrend(xValues, yValues, 2, true); // degree 2, allowNegative = true
+  if (!trendLine || !isFinite(trendLine.rSquared)) {
+    return null;
   }
   
-  const correlation = (xSumSq > 0 && ySumSq > 0) ? numerator / Math.sqrt(xSumSq * ySumSq) : 0;
-  const r2 = correlation * correlation;
-  
-  // Calculate p-value
-  let pValue = null;
+  const r2 = trendLine.rSquared;
+  const pValue = trendLine.pValue;
   const n = dataPoints.length;
-  if (n > 2 && Math.abs(correlation) < 1) {
-    const tStat = correlation * Math.sqrt((n - 2) / (1 - r2));
-    const absT = Math.abs(tStat);
-    
-    function erf(x) {
-      const a1 =  0.254829592;
-      const a2 = -0.284496736;
-      const a3 =  1.421413741;
-      const a4 = -1.453152027;
-      const a5 =  1.061405429;
-      const p  =  0.3275911;
-      
-      const sign = x < 0 ? -1 : 1;
-      x = Math.abs(x);
-      
-      const t = 1.0 / (1.0 + p * x);
-      const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-      
-      return sign * y;
+  const coefficients = trendLine.coefficients;
+  
+  // Calculate residuals from polynomial regression for tests
+  const residuals = [];
+  for (let i = 0; i < n; i++) {
+    let predicted = 0;
+    for (let j = 0; j < coefficients.length; j++) {
+      predicted += coefficients[j] * Math.pow(xValues[i], j);
     }
-    
-    const z = absT;
-    const p = 1 - (0.5 * (1 + erf(z / Math.sqrt(2))));
-    pValue = 2 * p;
+    residuals.push(yValues[i] - predicted);
+  }
+  
+  // Calculate Breusch-Pagan test for heteroscedasticity (using polynomial residuals)
+  const bpTest = breuschPaganTestPolynomial(xValues, residuals);
+  
+  // Calculate White's test for heteroscedasticity (using polynomial residuals)
+  let whiteTestResult = { pValue: null };
+  try {
+    whiteTestResult = whiteTestPolynomial(xValues, residuals);
+  } catch (e) {
+    console.warn('White test failed:', e);
+  }
+  
+  // Calculate number of Cook's distance outliers (using polynomial regression)
+  const cookOutliers = countCookDistanceOutliersPolynomial(xValues, yValues, coefficients);
+  
+  // Calculate p-value using robust standard errors
+  let robustPValue = null;
+  try {
+    robustPValue = calculateRobustPValue(xValues, yValues, coefficients, residuals);
+  } catch (e) {
+    console.warn('Robust SE calculation failed:', e);
   }
   
   return {
     variable: policyVar,
     r2: r2,
     pValue: pValue,
-    n: n
+    robustPValue: robustPValue,
+    bpPValue: bpTest.pValue,
+    whitePValue: whiteTestResult.pValue,
+    cookOutliers: cookOutliers,
+    n: n,
+    coefficients: coefficients // Store for chart rendering
   };
 }
 
@@ -4080,20 +5218,24 @@ function renderResidualExplanatoryPowerTable(filteredTraces, selectedYear, selec
   // Build subtitle
   const policyYearLabel = selectedPolicyYear === '2020-2021' ? '2020-2021 Average' : selectedPolicyYear;
   const typeLabel = selectedType === 'isolated' ? 'Isolated' : 'Cumulative';
-  const subtitle = `(${policyYearLabel} Policy vs ${selectedYear} SVI Residuals (${typeLabel}))`;
+  const subtitle = `${policyYearLabel} Policy vs ${selectedYear} SVI Residuals (${typeLabel})`;
   
   // Build table HTML
-  let html = `<div style="margin-top: 10px; margin-bottom: 8px; color: var(--text); opacity: 0.8; font-size: 0.9em;">${subtitle}</div>`;
-  html += '<table style="width: 100%; border-collapse: collapse; margin-top: 10px;">';
-  html += '<thead><tr style="border-bottom: 2px solid var(--text);">';
+  let html = '<table style="width: 100%; border-collapse: collapse; margin-top: 10px;">';
+  html += '<thead>';
+  html += `<tr style="border-bottom: 1px solid var(--text);"><th colspan="7" style="text-align: left; padding: 8px;">${subtitle}</th></tr>`;
+  html += '<tr style="border-bottom: 2px solid var(--text);">';
   html += '<th style="text-align: left; padding: 8px;">Policy Variable</th>';
   html += '<th style="text-align: right; padding: 8px;">R²</th>';
   html += '<th style="text-align: right; padding: 8px;">p-value</th>';
+  html += '<th style="text-align: right; padding: 8px; white-space: nowrap;">p-value<br>(Robust SE)</th>';
+  html += '<th style="text-align: right; padding: 8px; white-space: nowrap;">White<br>p-value</th>';
+  html += '<th style="text-align: right; padding: 8px; white-space: nowrap;">Influential<br>Points</th>';
   html += '<th style="text-align: right; padding: 8px;">n</th>';
   html += '</tr></thead><tbody>';
   
   if (stats.length === 0) {
-    html += '<tr><td colspan="4" style="text-align: center; padding: 8px; color: var(--text); opacity: 0.7;">No statistically significant variables (p < 0.05)</td></tr>';
+    html += '<tr><td colspan="7" style="text-align: center; padding: 8px; color: var(--text); opacity: 0.7;">No statistically significant variables (p < 0.05)</td></tr>';
   } else {
     stats.forEach(item => {
       html += '<tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1);">';
@@ -4104,6 +5246,21 @@ function renderResidualExplanatoryPowerTable(filteredTraces, selectedYear, selec
       } else {
         html += `<td style="text-align: right; padding: 8px;">${item.pValue.toFixed(4)}</td>`;
       }
+      if (item.robustPValue === null || !isFinite(item.robustPValue)) {
+        html += '<td style="text-align: right; padding: 8px;">—</td>';
+      } else if (item.robustPValue < 0.001) {
+        html += '<td style="text-align: right; padding: 8px;">&lt;0.001</td>';
+      } else {
+        html += `<td style="text-align: right; padding: 8px;">${item.robustPValue.toFixed(4)}</td>`;
+      }
+      if (item.whitePValue === null || !isFinite(item.whitePValue)) {
+        html += '<td style="text-align: right; padding: 8px;">—</td>';
+      } else if (item.whitePValue < 0.001) {
+        html += '<td style="text-align: right; padding: 8px;">&lt;0.001</td>';
+      } else {
+        html += `<td style="text-align: right; padding: 8px;">${item.whitePValue.toFixed(4)}</td>`;
+      }
+      html += `<td style="text-align: right; padding: 8px;">${item.cookOutliers !== undefined ? item.cookOutliers : 0}</td>`;
       html += `<td style="text-align: right; padding: 8px;">${item.n}</td>`;
       html += '</tr>';
     });
@@ -4114,7 +5271,8 @@ function renderResidualExplanatoryPowerTable(filteredTraces, selectedYear, selec
 }
 
 // Render scatterplot showing relationship between policy variable and SVI residuals
-function renderResidualExplanatoryPowerChart(filteredTraces) {
+// excludeInfluentialPoints: if true, exclude influential points from regression calculation
+function renderResidualExplanatoryPowerChart(filteredTraces, excludeInfluentialPoints = false) {
   const container = document.getElementById('residualExplanatoryPowerChart');
   if (!container) return;
   
@@ -4295,79 +5453,225 @@ function renderResidualExplanatoryPowerChart(filteredTraces) {
     return;
   }
   
-  // Calculate R² and regression line
-  const xValues = dataPoints.map(d => d.x);
-  const yValues = dataPoints.map(d => d.y);
+  // First, identify influential points using all data
+  const allXValues = dataPoints.map(d => d.x);
+  const allYValues = dataPoints.map(d => d.y);
   
-  // Calculate means
-  const xMean = xValues.reduce((sum, x) => sum + x, 0) / xValues.length;
-  const yMean = yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
-  
-  // Calculate correlation and R²
-  let numerator = 0;
-  let xSumSq = 0;
-  let ySumSq = 0;
-  
-  for (let i = 0; i < xValues.length; i++) {
-    const xDiff = xValues[i] - xMean;
-    const yDiff = yValues[i] - yMean;
-    numerator += xDiff * yDiff;
-    xSumSq += xDiff * xDiff;
-    ySumSq += yDiff * yDiff;
+  const initialTrendLine = fitPolynomialTrend(allXValues, allYValues, 2, true);
+  if (!initialTrendLine || !isFinite(initialTrendLine.rSquared)) {
+    Plotly.purge(container);
+    Plotly.react(container, [], {
+      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+      xaxis: { title: `${selectedPolicyYear === '2020-2021' ? 'Average' : selectedPolicyYear} ${selectedPolicy}` }, 
+      yaxis: { title: `Residuals from SVI (${selectedType === 'isolated' ? 'Isolated' : 'Cumulative'} ${selectedYear})` },
+      margin: { t: 20, r: 10, b: 40, l: 50 },
+    }, { responsive: true, displayModeBar: false });
+    // Hide button if no valid regression
+    const hideBtn = document.getElementById('hideInfluentialPointsResidualBtn');
+    if (hideBtn) hideBtn.style.display = 'none';
+    return;
   }
   
-  const correlation = (xSumSq > 0 && ySumSq > 0) ? numerator / Math.sqrt(xSumSq * ySumSq) : 0;
-  const r2 = correlation * correlation;
-  
-  // Calculate p-value for correlation
-  let pValue = null;
-  const n = dataPoints.length;
-  if (n > 2 && Math.abs(correlation) < 1) {
-    const tStat = correlation * Math.sqrt((n - 2) / (1 - r2));
-    const absT = Math.abs(tStat);
-    
-    // Helper function for error function approximation
-    function erf(x) {
-      const a1 =  0.254829592;
-      const a2 = -0.284496736;
-      const a3 =  1.421413741;
-      const a4 = -1.453152027;
-      const a5 =  1.061405429;
-      const p  =  0.3275911;
-      
-      const sign = x < 0 ? -1 : 1;
-      x = Math.abs(x);
-      
-      const t = 1.0 / (1.0 + p * x);
-      const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-      
-      return sign * y;
+  // Calculate influential points using all data
+  const initialCoefficients = initialTrendLine.coefficients;
+  const initialResiduals = [];
+  for (let i = 0; i < allXValues.length; i++) {
+    let predicted = 0;
+    for (let j = 0; j < initialCoefficients.length; j++) {
+      predicted += initialCoefficients[j] * Math.pow(allXValues[i], j);
     }
-    
-    const z = absT;
-    const p = 1 - (0.5 * (1 + erf(z / Math.sqrt(2))));
-    pValue = 2 * p; // two-tailed test
+    initialResiduals.push(allYValues[i] - predicted);
   }
   
-  // Calculate regression line (y = a + b*x)
-  const b = xSumSq > 0 ? numerator / xSumSq : 0;
-  const a = yMean - b * xMean;
+  const outlierIndices = [];
+  const cookOutliers = countCookDistanceOutliersPolynomial(allXValues, allYValues, initialCoefficients);
   
-  // Create regression line points
-  const xMin = Math.min(...xValues);
-  const xMax = Math.max(...xValues);
-  const xRange = xMax - xMin;
-  const regressionX = [xMin - xRange * 0.1, xMax + xRange * 0.1];
-  const regressionY = regressionX.map(x => a + b * x);
+  // Calculate outlier indices
+  const n = allXValues.length;
+  const xMean = allXValues.reduce((sum, x) => sum + x, 0) / n;
+  let xSumSq = 0;
+  for (let i = 0; i < n; i++) {
+    const xDiff = allXValues[i] - xMean;
+    xSumSq += xDiff * xDiff;
+  }
   
-  // Create scatterplot trace
+  // Build design matrix X for leverage calculation
+  const X = [];
+  for (let i = 0; i < n; i++) {
+    const row = [];
+    for (let j = 0; j < initialCoefficients.length; j++) {
+      row.push(Math.pow(allXValues[i], j));
+    }
+    X.push(row);
+  }
+  
+  // Calculate X'X
+  const XTX = [];
+  for (let i = 0; i < initialCoefficients.length; i++) {
+    XTX[i] = [];
+    for (let j = 0; j < initialCoefficients.length; j++) {
+      let sum = 0;
+      for (let m = 0; m < n; m++) {
+        sum += X[m][i] * X[m][j];
+      }
+      XTX[i][j] = sum;
+    }
+  }
+  
+  // Calculate (X'X)^(-1) for k=3 (degree 2 polynomial)
+  const k = initialCoefficients.length;
+  if (k === 3) {
+    const det = XTX[0][0] * (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) -
+                XTX[0][1] * (XTX[1][0] * XTX[2][2] - XTX[1][2] * XTX[2][0]) +
+                XTX[0][2] * (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]);
+    
+    if (Math.abs(det) >= 1e-10) {
+      const invXTX = [
+        [
+          (XTX[1][1] * XTX[2][2] - XTX[1][2] * XTX[2][1]) / det,
+          (XTX[0][2] * XTX[2][1] - XTX[0][1] * XTX[2][2]) / det,
+          (XTX[0][1] * XTX[1][2] - XTX[0][2] * XTX[1][1]) / det
+        ],
+        [
+          (XTX[1][2] * XTX[2][0] - XTX[1][0] * XTX[2][2]) / det,
+          (XTX[0][0] * XTX[2][2] - XTX[0][2] * XTX[2][0]) / det,
+          (XTX[0][2] * XTX[1][0] - XTX[0][0] * XTX[1][2]) / det
+        ],
+        [
+          (XTX[1][0] * XTX[2][1] - XTX[1][1] * XTX[2][0]) / det,
+          (XTX[0][1] * XTX[2][0] - XTX[0][0] * XTX[2][1]) / det,
+          (XTX[0][0] * XTX[1][1] - XTX[0][1] * XTX[1][0]) / det
+        ]
+      ];
+      
+      let sumSquaredResiduals = 0;
+      for (let i = 0; i < n; i++) {
+        sumSquaredResiduals += initialResiduals[i] * initialResiduals[i];
+      }
+      const mse = sumSquaredResiduals / (n - k);
+      const threshold = 4 / n;
+      
+      if (mse > 0) {
+        for (let i = 0; i < dataPoints.length; i++) {
+          const Xi = X[i];
+          
+          // Calculate (X'X)^(-1) * X_i'
+          const invXTX_Xi = [];
+          for (let j = 0; j < k; j++) {
+            let sum = 0;
+            for (let m = 0; m < k; m++) {
+              sum += invXTX[j][m] * Xi[m];
+            }
+            invXTX_Xi[j] = sum;
+          }
+          
+          // Calculate h_i = X_i * invXTX_Xi
+          let leverage = 0;
+          for (let j = 0; j < k; j++) {
+            leverage += Xi[j] * invXTX_Xi[j];
+          }
+          leverage = Math.max(0, Math.min(1, leverage));
+          
+          const residualSq = initialResiduals[i] * initialResiduals[i];
+          const cooksDistance = (residualSq / (k * mse)) * (leverage / ((1 - leverage) * (1 - leverage) + 1e-10));
+          
+          if (cooksDistance > threshold) {
+            outlierIndices.push(i);
+          }
+        }
+      }
+    }
+  }
+  
+  // Show/hide button based on whether there are influential points
+  const hideBtn = document.getElementById('hideInfluentialPointsResidualBtn');
+  if (hideBtn) {
+    if (outlierIndices.length > 0) {
+      hideBtn.style.display = 'inline-block';
+      hideBtn.textContent = excludeInfluentialPoints ? 'Show Influential Points' : 'Hide Influential Points';
+    } else {
+      hideBtn.style.display = 'none';
+    }
+  }
+  
+  // Filter data points if excluding influential points
+  let filteredDataPoints = dataPoints;
+  if (excludeInfluentialPoints && outlierIndices.length > 0) {
+    filteredDataPoints = dataPoints.filter((point, index) => !outlierIndices.includes(index));
+  }
+  
+  // Recalculate regression with filtered data
+  const xValues = filteredDataPoints.map(d => d.x);
+  const yValues = filteredDataPoints.map(d => d.y);
+  
+  const trendLine = fitPolynomialTrend(xValues, yValues, 2, true);
+  if (!trendLine || !isFinite(trendLine.rSquared)) {
+    Plotly.purge(container);
+    Plotly.react(container, [], {
+      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+      xaxis: { title: `${selectedPolicyYear === '2020-2021' ? 'Average' : selectedPolicyYear} ${selectedPolicy}` }, 
+      yaxis: { title: `Residuals from SVI (${selectedType === 'isolated' ? 'Isolated' : 'Cumulative'} ${selectedYear})` },
+      margin: { t: 20, r: 10, b: 40, l: 50 },
+    }, { responsive: true, displayModeBar: false });
+    return;
+  }
+  
+  const r2 = trendLine.rSquared;
+  const pValue = trendLine.pValue;
+  const coefficients = trendLine.coefficients;
+  
+  // Calculate residuals from polynomial regression (using filtered data)
+  const residuals = [];
+  for (let i = 0; i < xValues.length; i++) {
+    let predicted = 0;
+    for (let j = 0; j < coefficients.length; j++) {
+      predicted += coefficients[j] * Math.pow(xValues[i], j);
+    }
+    residuals.push(yValues[i] - predicted);
+  }
+  
+  // Calculate White's test for heteroscedasticity (using polynomial residuals from filtered data)
+  let whiteTestResult = { pValue: null };
+  try {
+    whiteTestResult = whiteTestPolynomial(xValues, residuals);
+  } catch (e) {
+    console.warn('White test failed:', e);
+  }
+  
+  // Calculate robust p-value (using filtered data)
+  let robustPValue = null;
+  try {
+    robustPValue = calculateRobustPValue(xValues, yValues, coefficients, residuals);
+  } catch (e) {
+    console.warn('Robust SE calculation failed:', e);
+  }
+  
+  // Split ALL data points into outliers and non-outliers (for display)
+  // But use filtered data for regression
+  const outlierPoints = [];
+  const normalPoints = [];
+  
+  dataPoints.forEach((point, index) => {
+    if (outlierIndices.includes(index)) {
+      outlierPoints.push(point);
+    } else {
+      normalPoints.push(point);
+    }
+  });
+  
+  // Use polynomial trend line points from fitPolynomialTrend
+  const regressionX = trendLine.x;
+  const regressionY = trendLine.y;
+  
+  // Create scatterplot trace for normal points
   const scatterTrace = {
-    x: dataPoints.map(d => d.x),
-    y: dataPoints.map(d => d.y),
+    x: normalPoints.map(d => d.x),
+    y: normalPoints.map(d => d.y),
     mode: 'markers+text',
     type: 'scatter',
     name: 'Countries',
-    text: dataPoints.map(d => d.countryName),
+    showlegend: false,
+    text: normalPoints.map(d => d.countryName),
     textposition: 'top center',
     textfont: { size: 10 },
     marker: {
@@ -4376,16 +5680,38 @@ function renderResidualExplanatoryPowerChart(filteredTraces) {
       opacity: 0.7
     },
     hovertemplate: '<b>%{text}</b><br>Policy Value: %{x:.2f}<br>Residual: %{y:.2f}<extra></extra>',
-    customdata: dataPoints.map(d => d.countryName)
+    customdata: normalPoints.map(d => d.countryName)
   };
   
-  // Create regression line trace
+  // Create scatterplot trace for outliers (always show them, but maybe with different opacity if excluded)
+  const outlierTrace = outlierPoints.length > 0 ? {
+    x: outlierPoints.map(d => d.x),
+    y: outlierPoints.map(d => d.y),
+    mode: 'markers+text',
+    type: 'scatter',
+    name: `Influential Points (Cook's D > 4/n)`,
+    text: outlierPoints.map(d => d.countryName),
+    textposition: 'top center',
+    textfont: { size: 10, color: '#d62728' },
+    marker: {
+      size: 12,
+      color: '#d62728',
+      opacity: excludeInfluentialPoints ? 0.3 : 0.9,
+      symbol: 'diamond',
+      line: { width: 2, color: '#ffffff' }
+    },
+    hovertemplate: '<b>%{text}</b> (Influential Point)<br>Policy Value: %{x:.2f}<br>Residual: %{y:.2f}<extra></extra>',
+    customdata: outlierPoints.map(d => d.countryName)
+  } : null;
+  
+  // Create regression line trace (simplified name for plot)
   const regressionTrace = {
     x: regressionX,
     y: regressionY,
     mode: 'lines',
     type: 'scatter',
-    name: `R² = ${r2.toFixed(3)}${pValue !== null ? `, p = ${pValue < 0.001 ? '<0.001' : pValue.toFixed(3)}` : ''}`,
+    name: 'Regression',
+    showlegend: false,
     line: {
       color: '#ff7f0e',
       width: 2,
@@ -4394,6 +5720,16 @@ function renderResidualExplanatoryPowerChart(filteredTraces) {
     hovertemplate: 'R² = %{customdata[0]:.3f}, p = %{customdata[1]}<extra></extra>',
     customdata: [[r2, pValue !== null ? (pValue < 0.001 ? '<0.001' : pValue.toFixed(3)) : 'N/A']]
   };
+  
+  // Update outlier trace to not show in legend
+  if (outlierTrace) {
+    outlierTrace.showlegend = false;
+  }
+  
+  // Calculate xMin and xRange for zero line
+  const xMin = Math.min(...allXValues);
+  const xMax = Math.max(...allXValues);
+  const xRange = xMax - xMin;
   
   // Add horizontal line at y=0
   const zeroLine = {
@@ -4410,7 +5746,47 @@ function renderResidualExplanatoryPowerChart(filteredTraces) {
     hovertemplate: 'Zero Line<extra></extra>'
   };
   
-  const traces = [scatterTrace, regressionTrace, zeroLine];
+  const traces = [scatterTrace];
+  if (outlierTrace) {
+    traces.push(outlierTrace);
+  }
+  traces.push(regressionTrace, zeroLine);
+  
+  // Populate separate legend element above the plot
+  const legendContainer = document.getElementById('residualExplanatoryPowerLegend');
+  if (legendContainer) {
+    let legendHTML = '<div style="display: flex; flex-wrap: wrap; gap: 15px; align-items: center;">';
+    
+    // Countries
+    legendHTML += '<span><span style="display: inline-block; width: 12px; height: 12px; background-color: #1f77b4; border-radius: 50%; margin-right: 5px;"></span>Countries</span>';
+    
+    // Influential Points
+    if (outlierPoints.length > 0) {
+      legendHTML += `<span><span style="display: inline-block; width: 12px; height: 12px; background-color: #d62728; border: 2px solid #ffffff; transform: rotate(45deg); margin-right: 5px;"></span>Influential Points (Cook's D > ${(4/allXValues.length).toFixed(3)})</span>`;
+    }
+    
+    // Statistics
+    legendHTML += `<span><strong>R² = ${r2.toFixed(3)}</strong></span>`;
+    if (pValue !== null) {
+      legendHTML += `<span>p = ${pValue < 0.001 ? '<0.001' : pValue.toFixed(3)}</span>`;
+    }
+    if (robustPValue !== null && isFinite(robustPValue)) {
+      legendHTML += `<span>p (Robust SE) = ${robustPValue < 0.001 ? '<0.001' : robustPValue.toFixed(3)}</span>`;
+    }
+    if (whiteTestResult.pValue !== null && isFinite(whiteTestResult.pValue)) {
+      legendHTML += `<span>White p = ${whiteTestResult.pValue < 0.001 ? '<0.001' : whiteTestResult.pValue.toFixed(3)}</span>`;
+    }
+    legendHTML += `<span>n = ${xValues.length}`;
+    if (excludeInfluentialPoints && outlierIndices.length > 0) {
+      legendHTML += ` (${outlierIndices.length} influential points excluded)`;
+    } else if (!excludeInfluentialPoints && outlierIndices.length > 0) {
+      legendHTML += `, Influential Points: ${outlierIndices.length}`;
+    }
+    legendHTML += '</span>';
+    
+    legendHTML += '</div>';
+    legendContainer.innerHTML = legendHTML;
+  }
   
   const layout = {
     paper_bgcolor: "rgba(0,0,0,0)",
@@ -4422,23 +5798,8 @@ function renderResidualExplanatoryPowerChart(filteredTraces) {
       title: `Residuals from SVI (${selectedType === 'isolated' ? 'Isolated' : 'Cumulative'} ${selectedYear})`
     },
     margin: { t: 20, r: 10, b: 40, l: 60 },
-    legend: { x: 0.02, y: 0.98, bgcolor: 'rgba(255, 255, 255, 0.8)' },
-    hovermode: 'closest',
-    annotations: [{
-      x: xMax,
-      y: yMean,
-      text: `R² = ${r2.toFixed(3)}${pValue !== null ? `<br>p = ${pValue < 0.001 ? '<0.001' : pValue.toFixed(3)}` : ''}<br>n = ${dataPoints.length}`,
-      showarrow: false,
-      xref: 'x',
-      yref: 'y',
-      xanchor: 'right',
-      yanchor: 'middle',
-      bgcolor: 'rgba(255, 255, 255, 0.8)',
-      bordercolor: 'rgba(0, 0, 0, 0.5)',
-      borderwidth: 1,
-      borderpad: 4,
-      font: { size: 12 }
-    }]
+    showlegend: false,
+    hovermode: 'closest'
   };
   
   Plotly.react(container, traces, layout, { responsive: true, displayModeBar: false });
@@ -5215,7 +6576,7 @@ function renderCompositeIndexWeightsTable(regression, mode = null) {
   
   // Determine mode label
   let modeLabel = 'Dynamic';
-  if (mode === '2025-fixed') modeLabel = '2025 Fixed (all countries)';
+  if (mode === '2024-fixed') modeLabel = '2024 Fixed (all countries)';
   else if (mode === '2024-fixed') modeLabel = '2024 Fixed (all countries)';
   else if (mode === '2023-fixed') modeLabel = '2023 Fixed (all countries)';
   
@@ -5293,8 +6654,8 @@ function renderCompositeIndexScatterplot(filteredTraces) {
   // Determine which regression to use based on mode
   let regression;
   
-  if (mode === '2025-fixed' || mode === '2024-fixed' || mode === '2023-fixed') {
-    // Use fixed regression - extract year from mode (e.g., '2025-fixed' -> 2025)
+  if (mode === '2024-fixed' || mode === '2023-fixed' || mode === '2022-fixed') {
+    // Use fixed regression - extract year from mode (e.g., '2024-fixed' -> 2024)
     const fixedYear = parseInt(mode.replace('-fixed', ''));
     console.log(`Using fixed regression mode for year ${fixedYear}`);
     regression = calculateFixedRegression(fixedYear);
@@ -5797,7 +7158,7 @@ function renderCompositeIndexResidualEvolution(filteredTraces, mode, residualTyp
       // Enough filtered data, fit regression on filtered data
       let regression;
       
-      if (mode === '2025-fixed' || mode === '2024-fixed' || mode === '2023-fixed') {
+      if (mode === '2024-fixed' || mode === '2023-fixed' || mode === '2022-fixed') {
         const fixedYear = parseInt(mode.replace('-fixed', ''));
         regression = calculateFixedRegression(fixedYear);
         if (!regression) {
@@ -7883,7 +9244,14 @@ function setupControls() {
   const explanatoryPowerYearSelect = document.getElementById('explanatoryPowerYearSelect');
   const explanatoryPowerTypeSelect = document.getElementById('explanatoryPowerTypeSelect');
   
+  // State for hiding influential points (resets when plot changes)
+  let hideInfluentialPoints = false;
+  let hideInfluentialPointsResidual = false;
+  
   const updateExplanatoryPowerChart = () => {
+    // Reset state when switching plots
+    hideInfluentialPoints = false;
+    
     // Get current filtered traces
     const activeClusters = state.selectedClusters;
     const hasActive = activeClusters && activeClusters.size > 0;
@@ -7912,9 +9280,31 @@ function setupControls() {
       descText.textContent = getPolicyVariableDescription(selectedVariable);
     }
     
-    renderPolicyExplanatoryPowerChart(filteredTraces);
+    renderPolicyExplanatoryPowerChart(filteredTraces, hideInfluentialPoints);
     renderPolicyExplanatoryPowerTable(filteredTraces, selectedYear, selectedType, selectedPolicyYear);
   };
+  
+  // Button to toggle hiding influential points
+  const hideInfluentialPointsBtn = document.getElementById('hideInfluentialPointsBtn');
+  if (hideInfluentialPointsBtn) {
+    hideInfluentialPointsBtn.addEventListener('click', () => {
+      hideInfluentialPoints = !hideInfluentialPoints;
+      // Get current filtered traces
+      const activeClusters = state.selectedClusters;
+      const hasActive = activeClusters && activeClusters.size > 0;
+      const hasManual = state.manualSelectedCountries && state.manualSelectedCountries.size > 0;
+      
+      let filteredTraces = state.dedicatedPermanentTraces.filter((trace, index) => {
+        const metadata = state.dedicatedPermanentTraceMetadata[index];
+        if (!hasActive && !hasManual) return false;
+        const inCluster = hasActive ? activeClusters.has(countryClusters[metadata.country]) : false;
+        const inManual = hasManual ? state.manualSelectedCountries.has(metadata.country) : false;
+        return inCluster || inManual;
+      });
+      
+      renderPolicyExplanatoryPowerChart(filteredTraces, hideInfluentialPoints);
+    });
+  }
   
   if (explanatoryPowerVariableSelect) {
     explanatoryPowerVariableSelect.addEventListener('change', updateExplanatoryPowerChart);
@@ -7936,6 +9326,9 @@ function setupControls() {
   const residualExplanatoryPowerTypeSelect = document.getElementById('residualExplanatoryPowerTypeSelect');
   
   const updateResidualExplanatoryPowerChart = () => {
+    // Reset state when switching plots
+    hideInfluentialPointsResidual = false;
+    
     // Get current filtered traces
     const activeClusters = state.selectedClusters;
     const hasActive = activeClusters && activeClusters.size > 0;
@@ -7964,9 +9357,31 @@ function setupControls() {
       descText.textContent = getPolicyVariableDescription(selectedVariable);
     }
     
-    renderResidualExplanatoryPowerChart(filteredTraces);
+    renderResidualExplanatoryPowerChart(filteredTraces, hideInfluentialPointsResidual);
     renderResidualExplanatoryPowerTable(filteredTraces, selectedYear, selectedType, selectedPolicyYear);
   };
+  
+  // Button to toggle hiding influential points for residual chart
+  const hideInfluentialPointsResidualBtn = document.getElementById('hideInfluentialPointsResidualBtn');
+  if (hideInfluentialPointsResidualBtn) {
+    hideInfluentialPointsResidualBtn.addEventListener('click', () => {
+      hideInfluentialPointsResidual = !hideInfluentialPointsResidual;
+      // Get current filtered traces
+      const activeClusters = state.selectedClusters;
+      const hasActive = activeClusters && activeClusters.size > 0;
+      const hasManual = state.manualSelectedCountries && state.manualSelectedCountries.size > 0;
+      
+      let filteredTraces = state.dedicatedPermanentTraces.filter((trace, index) => {
+        const metadata = state.dedicatedPermanentTraceMetadata[index];
+        if (!hasActive && !hasManual) return false;
+        const inCluster = hasActive ? activeClusters.has(countryClusters[metadata.country]) : false;
+        const inManual = hasManual ? state.manualSelectedCountries.has(metadata.country) : false;
+        return inCluster || inManual;
+      });
+      
+      renderResidualExplanatoryPowerChart(filteredTraces, hideInfluentialPointsResidual);
+    });
+  }
   
   if (residualExplanatoryPowerVariableSelect) {
     residualExplanatoryPowerVariableSelect.addEventListener('change', (e) => {
@@ -8036,10 +9451,10 @@ function setupModeToggle() {
     const logYAxis = document.getElementById('logYAxis');
     if (logXAxis) logXAxis.checked = false;
     if (logYAxis) logYAxis.checked = false;
-    // Set Index Mode to 2025 Fixed in basic mode
+    // Set Index Mode to 2024 Fixed in basic mode
     const compositeIndexModeSelect = document.getElementById('compositeIndexModeSelect');
     if (compositeIndexModeSelect) {
-      compositeIndexModeSelect.value = '2025-fixed';
+      compositeIndexModeSelect.value = '2024-fixed';
     }
     // Make table containers scrollable
     makeTablesScrollable();
@@ -8054,7 +9469,382 @@ function setupModeToggle() {
     removeTableScrollableStyles();
   }
   
-  // Setup toggle button
+  // Set up Section 1 tutorial button
+  const section1TutorialBtn = document.getElementById('section1TutorialBtn');
+  if (section1TutorialBtn) {
+    section1TutorialBtn.addEventListener('click', () => {
+      if (typeof introJs !== 'undefined') {
+        const intro = introJs();
+        
+        // Wait a moment to ensure table is rendered
+        setTimeout(() => {
+          intro.setOptions({
+            steps: [
+              {
+                element: '#permanentPlotChart',
+                intro: 'These curves show how many extra people have died since the pandemic began',
+                position: 'top',
+                highlightClass: 'introjs-highlight-box'
+              },
+              {
+                element: '#summaryTable',
+                intro: 'This table shows cumulative excess mortality values for each country by year.',
+                position: 'top',
+                highlightClass: 'introjs-highlight-box'
+              },
+              {
+                element: '#permanentPlotChart .legend',
+                intro: 'You can toggle countries on and off by clicking on their names in the legend.',
+                position: 'left',
+                highlightClass: 'introjs-highlight-box'
+              },
+              {
+                element: '#permanentPlotChart',
+                intro: 'This lets you focus on a few countries to see the details more clearly.',
+                position: 'top',
+                highlightClass: 'introjs-highlight-box'
+              },
+              {
+                element: '#permanentPlotChart',
+                intro: 'Click on any line to see the underlying age-standardized mortality data and baseline for that country.',
+                position: 'top',
+                highlightClass: 'introjs-highlight-box',
+                // Custom step that will highlight both chart and details
+                stepId: 'clickLineStep'
+              }
+            ],
+            showProgress: true,
+            showBullets: false,
+            exitOnOverlayClick: true,
+            exitOnEsc: true,
+            tooltipClass: 'introjs-tooltip-custom',
+            highlightClass: 'introjs-highlight-box',
+            scrollToElement: true,
+            scrollPadding: 50
+          });
+          
+          // Add custom styling for white background tooltips and click animation
+          const style = document.createElement('style');
+          style.textContent = `
+            .introjs-highlight-box {
+              box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5), 0 0 15px rgba(66, 153, 225, 0.8) !important;
+              border: 3px solid #4299e1 !important;
+              border-radius: 4px !important;
+            }
+            .introjs-tooltip-custom {
+              background-color: white !important;
+              color: black !important;
+              border: 2px solid #4299e1 !important;
+            }
+            .introjs-tooltip-custom .introjs-tooltip-header {
+              color: black !important;
+            }
+            .introjs-tooltip-custom .introjs-tooltiptext {
+              color: black !important;
+            }
+            .introjs-tooltip-custom .introjs-button {
+              color: black !important;
+              border-color: #4299e1 !important;
+            }
+            .introjs-tooltip-custom .introjs-button:hover {
+              background-color: #4299e1 !important;
+              color: white !important;
+            }
+            .introjs-tooltip-custom .introjs-progressbar {
+              background-color: #4299e1 !important;
+            }
+            @keyframes clickAnimation {
+              0% {
+                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(66, 153, 225, 0.7);
+              }
+              50% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 10px rgba(66, 153, 225, 0);
+              }
+              100% {
+                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(66, 153, 225, 0);
+              }
+            }
+            .tutorial-click-animation {
+              animation: clickAnimation 0.4s ease-out;
+              position: relative;
+            }
+            .tutorial-click-animation::after {
+              content: '👆';
+              position: absolute;
+              top: -30px;
+              left: 50%;
+              transform: translateX(-50%);
+              font-size: 24px;
+              animation: clickAnimation 0.4s ease-out;
+              pointer-events: none;
+              z-index: 10000;
+            }
+            .tutorial-mouse-cursor {
+              position: fixed !important;
+              width: 24px;
+              height: 24px;
+              border: 3px solid #4299e1;
+              border-radius: 50% 50% 50% 0;
+              background: rgba(66, 153, 225, 0.5);
+              transform-origin: center center;
+              pointer-events: none;
+              z-index: 999999 !important;
+              transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+              box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+              margin: 0 !important;
+              padding: 0 !important;
+            }
+            .tutorial-mouse-cursor::after {
+              content: '';
+              position: absolute;
+              top: 9px;
+              left: 9px;
+              width: 5px;
+              height: 5px;
+              background: #4299e1;
+              border-radius: 50%;
+            }
+          `;
+          document.head.appendChild(style);
+          
+          // Track which step we're on
+          let currentStep = 0;
+          let scrollAnimationStarted = false;
+          let countriesFiltered = false;
+          let lineClicked = false;
+          
+          // On step change, handle automatic actions
+          intro.onchange((targetElement) => {
+            currentStep = intro._currentStep;
+            
+            // If we're on step 2 (legend step, 0-indexed), highlight only the visible legend
+            if (currentStep === 2) {
+              setTimeout(() => {
+                const chartEl = document.getElementById('permanentPlotChart');
+                if (chartEl) {
+                  // Find the legend element within the Plotly chart
+                  const legend = chartEl.querySelector('.legend');
+                  if (legend) {
+                    // Get the helper layer (intro.js highlight box)
+                    const helperLayer = document.querySelector('.introjs-helperLayer');
+                    if (helperLayer) {
+                      const legendRect = legend.getBoundingClientRect();
+                      const scrollX = window.scrollX || window.pageXOffset;
+                      const scrollY = window.scrollY || window.pageYOffset;
+                      
+                      // Find the actual plot area (the main chart plotting area, not the container)
+                      // This is the cumulative excess ASMR plot
+                      const plotDiv = chartEl.querySelector('.plotly');
+                      let plotHeight = legendRect.height;
+                      
+                      if (plotDiv) {
+                        // Find the actual plot area within the plotly div
+                        const plotArea = plotDiv.querySelector('.plot-container') || plotDiv.querySelector('.svg-container') || plotDiv;
+                        const plotRect = plotArea.getBoundingClientRect();
+                        // Use the plot area's height to match the cumulative excess ASMR plot
+                        plotHeight = plotRect.height;
+                      }
+                      
+                      // Align the top of the highlight with the plot's top
+                      // The legend should align with the plot area
+                      const plotDivRect = plotDiv ? plotDiv.getBoundingClientRect() : null;
+                      const highlightTop = plotDivRect ? (plotDivRect.top + scrollY) : (legendRect.top + scrollY);
+                      
+                      // Update highlight to cover the legend area with fixed height
+                      helperLayer.style.top = highlightTop + 'px';
+                      helperLayer.style.left = (legendRect.left + scrollX) + 'px';
+                      helperLayer.style.width = legendRect.width + 'px';
+                      helperLayer.style.height = '300px';
+                    }
+                  }
+                }
+              }, 100);
+            }
+            
+            // If we're on step 1 (table step, 0-indexed), automatically scroll the table
+            if (currentStep === 1 && !scrollAnimationStarted) {
+              scrollAnimationStarted = true;
+              
+              // Wait a moment for the element to be highlighted
+              setTimeout(() => {
+                const tableContainer = document.getElementById('summaryTable');
+                if (!tableContainer) {
+                  intro.nextStep();
+                  return;
+                }
+                
+                // Find the scrollable table element
+                const table = tableContainer.querySelector('.summary-table');
+                if (!table) {
+                  intro.nextStep();
+                  return;
+                }
+                
+                // Get the table's parent or the container itself
+                let scrollableElement = tableContainer;
+                
+                // Check if the table container has scrollable styles
+                const hasScroll = tableContainer.style.maxHeight || tableContainer.style.overflowY === 'auto';
+                
+                // If not scrollable, we might need to make it scrollable temporarily
+                if (!hasScroll) {
+                  const originalMaxHeight = tableContainer.style.maxHeight;
+                  const originalOverflowY = tableContainer.style.overflowY;
+                  tableContainer.style.maxHeight = '300px';
+                  tableContainer.style.overflowY = 'auto';
+                  scrollableElement = tableContainer;
+                  
+                  // Restore original styles on exit
+                  intro.onexit(() => {
+                    tableContainer.style.maxHeight = originalMaxHeight;
+                    tableContainer.style.overflowY = originalOverflowY;
+                  });
+                }
+                
+                // Get scroll properties
+                const maxScroll = scrollableElement.scrollHeight - scrollableElement.clientHeight;
+                if (maxScroll <= 0) {
+                  // Table is not scrollable, move to next step
+                  setTimeout(() => {
+                    intro.nextStep();
+                  }, 1000);
+                  return;
+                }
+                
+                // Scroll down, then back up, then move to next step
+                scrollableElement.scrollTo({
+                  top: maxScroll,
+                  behavior: 'smooth'
+                });
+                
+                // After scrolling down, scroll back up
+                setTimeout(() => {
+                  scrollableElement.scrollTo({
+                    top: 0,
+                    behavior: 'smooth'
+                  });
+                  // Don't auto-advance - let user click next
+                }, 1500);
+              }, 500);
+            }
+            
+            // If we're on step 3 (filter countries step, 0-indexed), toggle off countries in legend
+            if (currentStep === 3 && !countriesFiltered) {
+              countriesFiltered = true;
+              
+              // Wait a moment for the element to be highlighted
+              setTimeout(() => {
+                const chartEl = document.getElementById('permanentPlotChart');
+                if (!chartEl || !chartEl.data) {
+                  intro.nextStep();
+                  return;
+                }
+                
+                // Countries to keep visible: Iceland, Denmark, Norway, Australia, Finland, Taiwan
+                const targetCountryNames = ['Iceland', 'Denmark', 'Norway', 'Australia', 'Finland', 'Taiwan'];
+                
+                // Create visibility array: 'true' for visible, 'legendonly' for hidden
+                const visibilityUpdates = chartEl.data.map(trace => {
+                  return targetCountryNames.includes(trace.name) ? true : 'legendonly';
+                });
+                
+                // Update trace visibility using Plotly.restyle
+                // This simulates clicking on legend items to hide them
+                Plotly.restyle(chartEl, {
+                  visible: visibilityUpdates
+                });
+                // Don't auto-advance - let user click next
+              }, 500);
+            }
+            
+            // If we're on step 4 (click line step, 0-indexed), automatically click on a line
+            if (currentStep === 4 && !lineClicked) {
+              lineClicked = true;
+              
+              // Wait a moment for the element to be highlighted and chart to be ready
+              setTimeout(() => {
+                // Find the first available trace from our filtered countries
+                // The countries we filtered to: ISL, DNK, NOR, AUS, FIN, TWN
+                const targetCountryNames = ['Iceland', 'Denmark', 'Norway', 'Australia', 'Finland', 'Taiwan'];
+                let traceIndex = -1;
+                
+                // Find the first matching trace in state.dedicatedPermanentTraces
+                for (let i = 0; i < state.dedicatedPermanentTraces.length; i++) {
+                  const traceName = state.dedicatedPermanentTraces[i].name;
+                  if (targetCountryNames.includes(traceName)) {
+                    traceIndex = i;
+                    break;
+                  }
+                }
+                
+                if (traceIndex >= 0) {
+                  // Directly show the trace details (this is what clicking does)
+                  showDedicatedTraceDetails(traceIndex);
+                  
+                  // Wait for details to appear, then update highlight to include both elements
+                  setTimeout(() => {
+                    const chartEl = document.getElementById('permanentPlotChart');
+                    const detailsDiv = document.getElementById('permanentPlotTraceDetails');
+                    
+                    if (chartEl && detailsDiv && detailsDiv.style.display !== 'none') {
+                      // Get bounding boxes of both elements
+                      const chartRect = chartEl.getBoundingClientRect();
+                      const detailsRect = detailsDiv.getBoundingClientRect();
+                      
+                      // Calculate combined bounding box
+                      const minTop = Math.min(chartRect.top, detailsRect.top);
+                      const maxBottom = Math.max(chartRect.bottom, detailsRect.bottom);
+                      const minLeft = Math.min(chartRect.left, detailsRect.left);
+                      const maxRight = Math.max(chartRect.right, detailsRect.right);
+                      
+                      // Find intro.js highlight elements
+                      const helperLayer = document.querySelector('.introjs-helperLayer');
+                      const overlay = document.querySelector('.introjs-overlay');
+                      
+                      if (helperLayer) {
+                        // Update the highlight box to cover both elements
+                        const scrollX = window.scrollX || window.pageXOffset;
+                        const scrollY = window.scrollY || window.pageYOffset;
+                        
+                        helperLayer.style.top = (minTop + scrollY) + 'px';
+                        helperLayer.style.left = (minLeft + scrollX) + 'px';
+                        helperLayer.style.width = (maxRight - minLeft) + 'px';
+                        helperLayer.style.height = (maxBottom - minTop) + 'px';
+                      }
+                      
+                      // Update overlay to match
+                      if (overlay) {
+                        // The overlay should already cover everything, but we ensure it's correct
+                        overlay.style.display = 'block';
+                      }
+                      
+                      // Scroll to show both elements nicely
+                      setTimeout(() => {
+                        const scrollTarget = minTop < (window.scrollY + 100) ? chartEl : detailsDiv;
+                        scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                      }, 100);
+                    }
+                  }, 500);
+                }
+              }, 1000);
+            }
+          });
+          
+          intro.onexit(() => {
+            scrollAnimationStarted = false;
+            countriesFiltered = false;
+            lineClicked = false;
+          });
+          
+          intro.start();
+        }, 100);
+      }
+    });
+  }
+
   const modeToggleBtn = document.getElementById('modeToggleBtn');
   if (modeToggleBtn) {
     // Update button text based on current mode
@@ -9234,8 +11024,8 @@ async function processBaselineForComparison(filename) {
   // Clear cache to ensure we calculate fresh regression for this baseline
   fixedRegressionsCache['2025'] = null;
   
-  // Calculate 2025 fixed regression (will be fresh since cache is cleared)
-  const regression = calculateFixedRegression(2025);
+  // Calculate 2024 fixed regression (will be fresh since cache is cleared)
+  const regression = calculateFixedRegression(2024);
   if (!regression) {
     return {
       filename,
@@ -9245,7 +11035,7 @@ async function processBaselineForComparison(filename) {
   }
   
   // Generate residual evolution data (isolated type)
-  const residualData = generateResidualEvolutionData(allTraces, '2025-fixed', 'isolated');
+  const residualData = generateResidualEvolutionData(allTraces, '2024-fixed', 'isolated');
   
   // Calculate variance
   const varianceData = calculateResidualVariance(residualData);
@@ -9505,7 +11295,7 @@ function generateResidualEvolutionData(filteredTraces, mode, residualType = 'iso
       // Enough filtered data, use fixed regression
       let regression;
       
-      if (mode === '2025-fixed' || mode === '2024-fixed' || mode === '2023-fixed') {
+      if (mode === '2024-fixed' || mode === '2023-fixed' || mode === '2022-fixed') {
         const fixedYear = parseInt(mode.replace('-fixed', ''));
         regression = calculateFixedRegression(fixedYear);
         if (!regression) {
@@ -9787,7 +11577,7 @@ function renderBaselineComparisonGrid(results) {
       <h4 style="margin-top: 20px; margin-bottom: 10px;">Variance of Residuals by Year</h4>
       <div id="${varianceTableId}"></div>
       
-      <h4 style="margin-top: 20px; margin-bottom: 10px;">Current Index Weights (2025 Fixed)</h4>
+      <h4 style="margin-top: 20px; margin-bottom: 10px;">Current Index Weights (2024 Fixed)</h4>
       <div id="${weightsTableId}"></div>
       
       <h4 style="margin-top: 20px; margin-bottom: 10px;">Regression Summary (R² and p-values)</h4>
@@ -10190,14 +11980,15 @@ function renderAggregatedVarianceTable(results) {
     return;
   }
   
-  // Sort results: 2025 RMSE first, then others
+  // Sort results: 2024 RMSE first, then others
   const sortedResults = [...validResults].sort((a, b) => {
     if (a.filename === 'QPR-RSMEmin.txt') return -1;
     if (b.filename === 'QPR-RSMEmin.txt') return 1;
     return a.baselineName.localeCompare(b.baselineName);
   });
   
-  const years = [2021, 2022, 2023, 2024, 2025];
+  // Display labels: 2020-2024 (but varianceData may use actual years 2021-2025)
+  const years = [2020, 2021, 2022, 2023, 2024];
   
   let html = '<div style="overflow-x: auto;"><table class="summary-table" style="background: white; background-color: white; color: black;">';
   html += '<thead><tr><th style="background: white; background-color: white; color: black; padding: 8px 12px; border-bottom: 1px solid #ccc;">Year</th>';
@@ -10207,22 +11998,25 @@ function renderAggregatedVarianceTable(results) {
   html += '</tr></thead><tbody>';
   
   // Find minimum variance for each year
+  // Note: Display years are 2020-2024, but varianceData uses actual years 2021-2025
   const minVariancesByYear = {};
-  years.forEach(year => {
+  years.forEach(displayYear => {
+    const lookupYear = displayYear + 1; // Map display year to lookup year
     let minVariance = Infinity;
     sortedResults.forEach(result => {
-      const yearData = result.varianceData.find(d => d.year === year);
+      const yearData = result.varianceData.find(d => d.year === lookupYear);
       if (yearData && yearData.variance !== null && yearData.variance < minVariance) {
         minVariance = yearData.variance;
       }
     });
-    minVariancesByYear[year] = minVariance !== Infinity ? minVariance : null;
+    minVariancesByYear[displayYear] = minVariance !== Infinity ? minVariance : null;
   });
   
-  years.forEach(year => {
-    html += `<tr style="background: white; background-color: white; color: black;"><td style="background: white; background-color: white; color: black; padding: 8px 12px; border-bottom: 1px solid #ccc;"><strong>${year}</strong></td>`;
+  years.forEach(displayYear => {
+    const lookupYear = displayYear + 1; // Map display year to lookup year
+    html += `<tr style="background: white; background-color: white; color: black;"><td style="background: white; background-color: white; color: black; padding: 8px 12px; border-bottom: 1px solid #ccc;"><strong>${displayYear}</strong></td>`;
     sortedResults.forEach(result => {
-      const yearData = result.varianceData.find(d => d.year === year);
+      const yearData = result.varianceData.find(d => d.year === lookupYear);
       if (yearData && yearData.variance !== null) {
         const isMin = minVariancesByYear[year] !== null && 
                      Math.abs(yearData.variance - minVariancesByYear[year]) < 0.0001;
@@ -10902,10 +12696,10 @@ window.addEventListener("DOMContentLoaded", () => {
     const logYAxis = document.getElementById('logYAxis');
     if (logXAxis) logXAxis.checked = false;
     if (logYAxis) logYAxis.checked = false;
-    // Set Index Mode to 2025 Fixed in basic mode
+    // Set Index Mode to 2024 Fixed in basic mode
     const compositeIndexModeSelect = document.getElementById('compositeIndexModeSelect');
     if (compositeIndexModeSelect) {
-      compositeIndexModeSelect.value = '2025-fixed';
+      compositeIndexModeSelect.value = '2024-fixed';
     }
     // Make tables scrollable after a short delay to ensure they're rendered
     setTimeout(() => {

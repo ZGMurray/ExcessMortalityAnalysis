@@ -5,9 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Excess Mortality Analysis</title>
   <link rel="stylesheet" href="./assets/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/intro.js@7.2.0/minified/introjs.min.css">
   <script defer src="./assets/libs/plotly.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script defer src="./assets/script.js?v=3"></script>
+  <script src="https://cdn.jsdelivr.net/npm/intro.js@7.2.0/minified/intro.min.js"></script>
+  <script defer src="./assets/script.js?v=51"></script>
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; connect-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net;">
   <meta name="description" content="Interactive plot viewer for cumulative excess ASMR comparisons with data loading and export capabilities.">
 </head>
@@ -34,7 +36,10 @@
       </div>
     </div>
     <section id="permanentPlot" class="chart-card">
-      <h3 id="section1" style="margin-top: 16px; margin-bottom: 12px;">Section 1: Cumulative Excess ASMR</h3>
+      <h3 id="section1" style="margin-top: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">
+        <span>Section 1: Cumulative Excess ASMR</span>
+        <button id="section1TutorialBtn" class="filter-btn" style="font-size: 0.85em; padding: 4px 12px; font-weight: normal;" title="Start tutorial">Tutorial</button>
+      </h3>
       <div class="chart-controls">
         <div class="control-row advanced-only">
           <label>Data File
@@ -86,16 +91,17 @@
       <div id="summaryTable"></div>
       
       <div id="scatterplotSection" class="chart-card" style="margin-top: 20px;">
-        <h3 id="section2" style="margin-top: 0; margin-bottom: 12px;">Section 2: Structural Factors</h3>
+        <h3 id="section2" style="margin-top: 0; margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">
+          <span>Section 2: Structural Factors</span>
+          <button class="filter-btn" style="font-size: 0.85em; padding: 4px 12px; font-weight: normal; opacity: 0.5; cursor: not-allowed;" disabled title="Tutorial coming soon">Tutorial - Coming Soon</button>
+        </h3>
         <h2 style="display: none;">Average ASMR vs Cumulative Excess (follows table sorting)</h2>
         <div id="scatterplotXAxisTable" style="margin-bottom: 20px; display: none;"></div>
         <div class="chart-controls">
           <div class="control-row">
             <label>Year
               <select id="scatterplotYearSelect">
-                <option value="2025" selected>2025 (cumulative)</option>
-                <option value="2025-isolated">2025 (isolated)</option>
-                <option value="2024">2024 (cumulative)</option>
+                <option value="2024" selected>2024 (cumulative)</option>
                 <option value="2024-isolated">2024 (isolated)</option>
                 <option value="2023">2023 (cumulative)</option>
                 <option value="2023-isolated">2023 (isolated)</option>
@@ -103,6 +109,8 @@
                 <option value="2022-isolated">2022 (isolated)</option>
                 <option value="2021">2021 (cumulative)</option>
                 <option value="2021-isolated">2021 (isolated)</option>
+                <option value="2020">2020 (cumulative)</option>
+                <option value="2020-isolated">2020 (isolated)</option>
               </select>
             </label>
             <label>X Axis
@@ -179,9 +187,7 @@
           <div class="control-row">
             <label>Year
               <select id="compositeIndexYearSelect">
-                <option value="2025" selected>2025 (cumulative)</option>
-                <option value="2025-isolated">2025 (isolated)</option>
-                <option value="2024">2024 (cumulative)</option>
+                <option value="2024" selected>2024 (cumulative)</option>
                 <option value="2024-isolated">2024 (isolated)</option>
                 <option value="2023">2023 (cumulative)</option>
                 <option value="2023-isolated">2023 (isolated)</option>
@@ -189,14 +195,16 @@
                 <option value="2022-isolated">2022 (isolated)</option>
                 <option value="2021">2021 (cumulative)</option>
                 <option value="2021-isolated">2021 (isolated)</option>
+                <option value="2020">2020 (cumulative)</option>
+                <option value="2020-isolated">2020 (isolated)</option>
               </select>
             </label>
             <label class="advanced-only">Index Mode
               <select id="compositeIndexModeSelect">
                 <option value="dynamic">Dynamic</option>
-                <option value="2025-fixed" selected>2025 Fixed</option>
-                <option value="2024-fixed">2024 Fixed</option>
+                <option value="2024-fixed" selected>2024 Fixed</option>
                 <option value="2023-fixed">2023 Fixed</option>
+                <option value="2022-fixed">2022 Fixed</option>
               </select>
             </label>
           </div>
@@ -228,7 +236,10 @@
           <div id="regressionSummaryTable"></div>
         </div>
         
-        <h3 id="section3" style="margin-top: 40px; margin-bottom: 12px;">Section 3: Policy Factors</h3>
+        <h3 id="section3" style="margin-top: 40px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">
+          <span>Section 3: Policy Factors</span>
+          <button class="filter-btn" style="font-size: 0.85em; padding: 4px 12px; font-weight: normal; opacity: 0.5; cursor: not-allowed;" disabled title="Tutorial coming soon">Tutorial - Coming Soon</button>
+        </h3>
         <h3 style="margin-top: 30px;">Policy Variable vs Excess Mortality</h3>
         <p style="color: var(--text); opacity: 0.8; margin-bottom: 10px;">
           Relationship between policy indicator values and excess mortality
@@ -248,14 +259,17 @@
               </select>
             </label>
           </div>
+          <div id="explanatoryPowerVariableDescription" style="margin-top: 5px; margin-bottom: 10px; padding: 10px; background-color: rgba(255, 255, 255, 0.05); border-radius: 4px; font-size: 0.9em; color: var(--text);">
+            <strong>Description:</strong> <span id="explanatoryPowerDescriptionText">—</span>
+          </div>
           <div class="control-row">
             <label>Y-Axis: Excess Mortality Year
               <select id="explanatoryPowerYearSelect">
+                <option value="2020">2020</option>
                 <option value="2021">2021</option>
                 <option value="2022">2022</option>
                 <option value="2023">2023</option>
-                <option value="2024">2024</option>
-                <option value="2025" selected>2025</option>
+                <option value="2024" selected>2024</option>
               </select>
             </label>
             <label>Type
@@ -266,9 +280,10 @@
             </label>
           </div>
         </div>
-        <div id="explanatoryPowerVariableDescription" style="margin-top: 10px; padding: 10px; background-color: rgba(255, 255, 255, 0.05); border-radius: 4px; font-size: 0.9em; color: var(--text);">
-          <strong>Description:</strong> <span id="explanatoryPowerDescriptionText">—</span>
+        <div style="margin-top: 10px; margin-bottom: 10px;">
+          <button id="hideInfluentialPointsBtn" class="filter-btn" style="display: none;">Hide Influential Points</button>
         </div>
+        <div id="policyExplanatoryPowerLegend" style="margin-bottom: 10px; padding: 10px; background-color: rgba(255, 255, 255, 0.05); border-radius: 4px; font-size: 0.9em; color: var(--text);"></div>
         <div id="policyExplanatoryPowerChart" class="chart"></div>
         <div id="policyExplanatoryPowerTable" style="margin-top: 20px;"></div>
         
@@ -292,14 +307,17 @@
               </select>
             </label>
           </div>
+          <div id="residualExplanatoryPowerVariableDescription" style="margin-top: 5px; margin-bottom: 10px; padding: 10px; background-color: rgba(255, 255, 255, 0.05); border-radius: 4px; font-size: 0.9em; color: var(--text);">
+            <strong>Description:</strong> <span id="residualExplanatoryPowerDescriptionText">—</span>
+          </div>
           <div class="control-row">
             <label>Y-Axis: Excess Mortality Year
               <select id="residualExplanatoryPowerYearSelect">
+                <option value="2020">2020</option>
                 <option value="2021">2021</option>
                 <option value="2022">2022</option>
                 <option value="2023">2023</option>
-                <option value="2024">2024</option>
-                <option value="2025" selected>2025</option>
+                <option value="2024" selected>2024</option>
               </select>
             </label>
             <label>Type
@@ -310,13 +328,17 @@
             </label>
           </div>
         </div>
-        <div id="residualExplanatoryPowerVariableDescription" style="margin-top: 10px; padding: 10px; background-color: rgba(255, 255, 255, 0.05); border-radius: 4px; font-size: 0.9em; color: var(--text);">
-          <strong>Description:</strong> <span id="residualExplanatoryPowerDescriptionText">—</span>
+        <div style="margin-top: 10px; margin-bottom: 10px;">
+          <button id="hideInfluentialPointsResidualBtn" class="filter-btn" style="display: none;">Hide Influential Points</button>
         </div>
+        <div id="residualExplanatoryPowerLegend" style="margin-bottom: 10px; padding: 10px; background-color: rgba(255, 255, 255, 0.05); border-radius: 4px; font-size: 0.9em; color: var(--text);"></div>
         <div id="residualExplanatoryPowerChart" class="chart"></div>
         <div id="residualExplanatoryPowerTable" style="margin-top: 20px;"></div>
         
-        <h3 id="section4" style="margin-top: 30px;">Section 4: Counterfactuals</h3>
+        <h3 id="section4" style="margin-top: 30px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">
+          <span>Section 4: Counterfactuals</span>
+          <button class="filter-btn" style="font-size: 0.85em; padding: 4px 12px; font-weight: normal; opacity: 0.5; cursor: not-allowed;" disabled title="Tutorial coming soon">Tutorial - Coming Soon</button>
+        </h3>
         <div class="chart-controls">
           <div class="control-row" style="align-items: flex-start;">
             <label>Country 1
@@ -333,7 +355,7 @@
               <span style="margin-bottom: 4px;">Counterfactual Validity</span>
               <select id="counterfactualValidityType" style="margin-bottom: 4px;">
                 <option value="2019-asmr">2019 ASMR</option>
-                <option value="2025-svi" selected>2025 Structural Vulnerability Index</option>
+                <option value="2024-svi" selected>2024 Structural Vulnerability Index</option>
               </select>
               <div id="counterfactualValidity" style="font-weight: bold; color: var(--text);">—</div>
             </label>
@@ -400,7 +422,7 @@
         </p>
         <div id="aggregatedRegressionTable"></div>
         
-        <h4 style="margin-top: 30px; margin-bottom: 8px;">Structural Vulnerability Index (SVI - 2025 Fixed) - All Baselines</h4>
+        <h4 style="margin-top: 30px; margin-bottom: 8px;">Structural Vulnerability Index (SVI - 2024 Fixed) - All Baselines</h4>
         <p style="color: black; font-size: 0.9em; margin-bottom: 15px; margin-top: 0;">
           SVI weights were calculated from a multiregression across known structural factors (2019 ASMR, GDP, Healthcare Expenditure, Inequality, Poverty) against the 2025 (01.01.2020-31.12.2024) cumulative excess mortality for each baseline.
         </p>
@@ -438,11 +460,11 @@
 
     <section id="methods" aria-label="Methods">
       <h3 id="section5" style="margin-top: 0; margin-bottom: 12px;">Section 5: Method Notes</h3>
+      <h3>Baseline Selection</h3>
+      <p>If we treat the pandemic as an equilibrium shock, the optimal baseline predicts the post-shock return to equilibrium. Baselines are derived from the pre-pandemic period that minimises the RMSE to the post-pandemic equilibrium (2025 or 2024 depending on availability). Quasi Poisson Regression has been used in each case. <a href="https://zgmurray.github.io/RethinkingExcessMortality/" target="_blank" class="method-link">This baseline selection method outperforms static ranges on 7 out of 11 metrics.</a></p>
+      
       <h3>Age-Standardised Mortality Rate</h3>
       <p>Data Source: Short-term Mortality Fluctuations (STMF) by Human Mortality Database. STMF mortality rates have been aggregated to replicate ESP2013 ASMR in the following proportions: 0–14: 0.156, 15–64: 0.654, 65–74: 0.080, 75–84: 0.066, 85+: 0.044.</p>
-      
-      <h3>Baseline Selection</h3>
-      <p>If we treat the pandemic as an equilibrium shock, the optimal baseline predicts the post-shock return to equilibrium. Baselines are derived from the pre-pandemic period that minimises the RMSE to the post-pandemic equilibrium (2025 or 2024 depending on availability). Quasi Poisson Regression has been used in each case. <a href="./data/baselineComparisons.png" target="_blank" class="method-link">This baseline selection method outperforms static ranges on 7 out of 11 metrics.</a></p>
       
       <h3>Structural Vulnerability Index</h3>
       <p>The Structural Vulnerability Index is calculated using multiple regression analysis. A regression model is fitted to predict cumulative excess mortality from five structural factors: 2019 baseline ASMR (STMF-derived), GDP per capita (World Bank), GINI coefficient (World Bank), poverty rate (World Bank), and health expenditure as a percentage of GDP (World Bank). The index is the predicted value from this regression model, providing a composite measure of structural vulnerability that combines all five factors into a single metric.</p>
